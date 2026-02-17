@@ -265,13 +265,14 @@ spec:
             - "--extra-create-metadata"
             - "--leader-election=true"
             - "--default-fstype=ext4"
+            - "--timeout=60s"
           env:
             - name: ADDRESS
               value: /csi/csi.sock
           volumeMounts:
             - name: socket-dir
               mountPath: /csi
-              
+
         # CSI Attacher
         - name: csi-attacher
           image: registry.k8s.io/sig-storage/csi-attacher:v4.7.0
@@ -279,13 +280,14 @@ spec:
             - "--csi-address=$(ADDRESS)"
             - "--v=5"
             - "--leader-election=true"
+            - "--timeout=60s"
           env:
             - name: ADDRESS
               value: /csi/csi.sock
           volumeMounts:
             - name: socket-dir
               mountPath: /csi
-              
+
         # CSI Snapshotter
         - name: csi-snapshotter
           image: registry.k8s.io/sig-storage/csi-snapshotter:v8.1.0
@@ -293,13 +295,14 @@ spec:
             - "--csi-address=$(ADDRESS)"
             - "--v=5"
             - "--leader-election=true"
+            - "--timeout=60s"
           env:
             - name: ADDRESS
               value: /csi/csi.sock
           volumeMounts:
             - name: socket-dir
               mountPath: /csi
-              
+
         # CSI Resizer
         - name: csi-resizer
           image: registry.k8s.io/sig-storage/csi-resizer:v1.12.0
@@ -307,6 +310,7 @@ spec:
             - "--csi-address=$(ADDRESS)"
             - "--v=5"
             - "--leader-election=true"
+            - "--timeout=60s"
           env:
             - name: ADDRESS
               value: /csi/csi.sock
@@ -347,6 +351,7 @@ spec:
       serviceAccountName: truenas-csi-node-sa
       hostNetwork: true
       hostPID: true
+      hostIPC: true
       priorityClassName: system-node-critical
       tolerations:
         - operator: Exists
@@ -358,7 +363,7 @@ spec:
           lifecycle:
             postStart:
               exec:
-                command: ["/bin/sh", "-c", "mkdir -p /run/lock/iscsi && /usr/sbin/iscsid || true"]
+                command: ["/bin/sh", "-c", "mkdir -p /run/lock/iscsi && mv /usr/sbin/iscsiadm /usr/sbin/iscsiadm.orig 2>/dev/null; printf '#!/bin/sh\\nnsenter --mount=/host/proc/1/ns/mnt -- /usr/sbin/iscsiadm \"$@\"\\n' > /usr/sbin/iscsiadm && chmod +x /usr/sbin/iscsiadm"]
           securityContext:
             privileged: true
           args:
@@ -413,13 +418,16 @@ spec:
           volumeMounts:
             - name: plugin-dir
               mountPath: /csi
-            - name: pods-mount-dir
-              mountPath: /var/lib/kubelet/pods
+            - name: kubelet-dir
+              mountPath: /var/lib/kubelet
               mountPropagation: Bidirectional
             - name: device-dir
               mountPath: /dev
             - name: iscsi-dir
               mountPath: /etc/iscsi
+              mountPropagation: Bidirectional
+            - name: iscsi-lib
+              mountPath: /var/lib/iscsi
               mountPropagation: Bidirectional
             - name: host-root
               mountPath: /host
@@ -477,9 +485,9 @@ spec:
           hostPath:
             path: /var/lib/kubelet/plugins/csi.truenas.io/
             type: DirectoryOrCreate
-        - name: pods-mount-dir
+        - name: kubelet-dir
           hostPath:
-            path: /var/lib/kubelet/pods
+            path: /var/lib/kubelet
             type: Directory
         - name: device-dir
           hostPath:
@@ -488,6 +496,10 @@ spec:
           hostPath:
             path: /etc/iscsi
             type: Directory
+        - name: iscsi-lib
+          hostPath:
+            path: /var/lib/iscsi
+            type: DirectoryOrCreate
         - name: host-root
           hostPath:
             path: /

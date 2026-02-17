@@ -1,288 +1,257 @@
-# TrueNAS CSI Driver
+# Tekton Pipelines CLI (`tkn`)
 
-A Container Storage Interface (CSI) driver for [TrueNAS 25.10.0+](https://www.truenas.com/truenas-scale/), enabling dynamic provisioning of persistent volumes in Kubernetes using TrueNAS storage.
+[![Go Report Card](https://goreportcard.com/badge/tektoncd/cli)](https://goreportcard.com/report/tektoncd/cli)
+[![CII Best Practices](https://bestpractices.coreinfrastructure.org/projects/6510/badge)](https://bestpractices.coreinfrastructure.org/projects/6510)
 
-## Features
+<p align="center">
+<img width="250" height="175" src="https://github.com/cdfoundation/artwork/blob/main/tekton/additional-artwork/tekton-cli/color/tektoncli_color.svg" alt="Tekton logo"></img>
+</p>
 
-- **NFS volumes** - ReadWriteMany (RWX) access mode for shared storage
-- **iSCSI volumes** - Block storage with ReadWriteOnce (RWO) and ReadWriteMany (RWX) access modes (RWX requires cluster filesystem like GFS2/OCFS2)
-- **Dynamic provisioning** - Automatic volume creation and deletion
-- **Volume expansion** - Online resize of volumes
-- **Snapshots and clones** - CSI snapshot support for backup and cloning
-- **CHAP authentication** - Secure iSCSI connections
-- **ZFS compression** - LZ4, ZSTD, GZIP, and other algorithms
-- **ZFS encryption** - Dataset-level encryption with key management
-- **Automatic snapshot scheduling** - Periodic snapshots via StorageClass
-- **TrueNAS Websocket API** - Uses the modern TrueNAS Websocket API
+The _Tekton Pipelines CLI_ project provides a command-line interface (CLI) for interacting with [Tekton](https://tekton.dev/), an open-source framework for Continuous Integration and Delivery (CI/CD) systems.
 
-## Requirements
+## Installing `tkn`
 
-### TrueNAS
-- TrueNAS SCALE 25.10.0+
-- API access enabled
-- At least one ZFS pool configured
+Download the latest binary executable for your operating system.
 
-### Kubernetes
-- Kubernetes 1.26+
-- For snapshots: [snapshot-controller](https://github.com/kubernetes-csi/external-snapshotter) installed
+### Mac OS X
 
-### Node Requirements
-- **NFS volumes**: No additional requirements
-- **iSCSI volumes**: `open-iscsi` package installed on worker nodes
+- Use [Homebrew](https://brew.sh)
 
-## Quick Start
-
-1. **Create an API key in TrueNAS**
-   - Log into TrueNAS web UI
-   - Navigate to your profile → API Keys
-   - Create a new API key and copy it
-
-2. **Configure the driver**
-   ```bash
-   # Edit the deployment manifest
-   vi deploy/truenas-csi-driver.yaml
-   ```
-   Update the ConfigMap with your TrueNAS connection details and the Secret with your API key.
-
-3. **Deploy the driver**
-   ```bash
-   kubectl apply -f deploy/truenas-csi-driver.yaml
-   ```
-
-4. **Create a StorageClass and PVC**
-   ```bash
-   kubectl apply -f examples/storageclass-nfs.yaml
-   kubectl apply -f examples/pvc-nfs.yaml
-   ```
-
-## Installation
-
-### Prerequisites
-
-Install the snapshot controller (required for snapshot support):
-```bash
-kubectl apply -f https://raw.githubusercontent.com/kubernetes-csi/external-snapshotter/master/client/config/crd/snapshot.storage.k8s.io_volumesnapshotclasses.yaml
-kubectl apply -f https://raw.githubusercontent.com/kubernetes-csi/external-snapshotter/master/client/config/crd/snapshot.storage.k8s.io_volumesnapshotcontents.yaml
-kubectl apply -f https://raw.githubusercontent.com/kubernetes-csi/external-snapshotter/master/client/config/crd/snapshot.storage.k8s.io_volumesnapshots.yaml
-kubectl apply -f https://raw.githubusercontent.com/kubernetes-csi/external-snapshotter/master/deploy/kubernetes/snapshot-controller/rbac-snapshot-controller.yaml
-kubectl apply -f https://raw.githubusercontent.com/kubernetes-csi/external-snapshotter/master/deploy/kubernetes/snapshot-controller/setup-snapshot-controller.yaml
+```shell
+  brew install tektoncd-cli
 ```
 
-### Deploy the Driver
+- Use [released tarball](https://github.com/tektoncd/cli/releases/download/v0.37.0/tkn_0.37.0_Darwin_all.tar.gz)
 
-1. Edit `deploy/truenas-csi-driver.yaml` with your configuration
-2. Apply the manifest:
-   ```bash
-   kubectl apply -f deploy/truenas-csi-driver.yaml
-   ```
+  ```shell
+  # Get the tar.xz
+  curl -LO https://github.com/tektoncd/cli/releases/download/v0.37.0/tkn_0.37.0_Darwin_all.tar.gz
+  # Extract tkn to your PATH (e.g. /usr/local/bin)
+  sudo tar xvzf tkn_0.37.0_Darwin_all.tar.gz -C /usr/local/bin tkn
+  ```
 
-### Verify Installation
+### Windows
 
-```bash
-# Check driver pods are running
-kubectl get pods -n truenas-csi
+- Use [Chocolatey](https://chocolatey.org/packages/tektoncd-cli)
 
-# Verify CSI driver is registered
-kubectl get csidrivers
+```shell
+choco install tektoncd-cli --confirm
 ```
 
-## Configuration
-
-### Driver Configuration (ConfigMap)
-
-| Setting | Description | Example |
-|---------|-------------|---------|
-| `truenasURL` | WebSocket URL to TrueNAS API | `wss://10.0.0.100/api/current` |
-| `truenasInsecure` | Skip TLS verification | `true` (for self-signed certs) |
-| `defaultPool` | Default ZFS pool for volumes | `tank` |
-| `nfsServer` | NFS server address | `10.0.0.100` |
-| `iscsiPortal` | iSCSI portal address | `10.0.0.100:3260` |
-| `iscsiIQNBase` | Base IQN for iSCSI targets | `iqn.2024-01.com.example` |
-
-### StorageClass Parameters
-
-#### General Parameters
-
-| Parameter | Description | Values |
-|-----------|-------------|--------|
-| `protocol` | Storage protocol | `nfs`, `iscsi` |
-| `pool` | ZFS pool (overrides default) | pool name |
-| `compression` | ZFS compression algorithm | `OFF`, `LZ4`, `GZIP`, `ZSTD`, `ZLE`, `LZJB` |
-| `sync` | ZFS sync mode | `STANDARD`, `ALWAYS`, `DISABLED` |
-
-#### NFS Parameters
-
-| Parameter | Description | Example |
-|-----------|-------------|---------|
-| `nfs.hosts` | Allowed hosts | `10.0.0.0/8,192.168.1.0/24` |
-| `nfs.networks` | Allowed networks | `10.0.0.0/8` |
-| `nfs.mountOptions` | Client mount options | `hard,nfsvers=4.1` |
-
-#### iSCSI Parameters
-
-| Parameter | Description | Values |
-|-----------|-------------|--------|
-| `volblocksize` | ZVOL block size | `512`, `1K`, `2K`, `4K`, `8K`, `16K`, `32K`, `64K`, `128K` |
-| `iscsi.blocksize` | iSCSI logical block size | `512`, `1024`, `2048`, `4096` |
-| `iscsi.chapUser` | CHAP username | string |
-| `iscsi.chapSecret` | CHAP password (12-16 chars) | string |
-| `iscsi.chapPeerUser` | Mutual CHAP peer user | string |
-| `iscsi.chapPeerSecret` | Mutual CHAP peer password | string |
-| `iscsi.initiators` | Allowed initiator IQNs | comma-separated |
-| `iscsi.networks` | Allowed network CIDRs | comma-separated |
-
-#### Snapshot Task Parameters
-
-| Parameter | Description | Values |
-|-----------|-------------|--------|
-| `snapshot.schedule` | Cron schedule (5 fields) | `0 0 * * *` |
-| `snapshot.retention` | Retention period | `1`-`365` |
-| `snapshot.retentionUnit` | Retention unit | `HOUR`, `DAY`, `WEEK`, `MONTH`, `YEAR` |
-| `snapshot.naming` | Naming schema | `auto-%Y-%m-%d_%H-%M` |
-| `snapshot.recursive` | Include child datasets | `true`, `false` |
-
-#### Encryption Parameters
-
-| Parameter | Description | Values |
-|-----------|-------------|--------|
-| `encryption` | Enable encryption | `true`, `false` |
-| `encryption.algorithm` | Encryption algorithm | `AES-256-GCM`, `AES-128-CCM` |
-| `encryption.passphrase` | Passphrase (min 8 chars) | string |
-| `encryption.key` | Hex-encoded key (64 chars) | string |
-| `encryption.generateKey` | Auto-generate key | `true`, `false` |
-
-## Examples
-
-See the [`examples/`](examples/) folder for sample configurations:
-
-- `storageclass-nfs.yaml` - Basic NFS StorageClass
-- `storageclass-nfs-compressed.yaml` - NFS with ZSTD compression
-- `storageclass-iscsi.yaml` - Basic iSCSI StorageClass
-- `storageclass-iscsi-chap.yaml` - iSCSI with CHAP authentication
-- `storageclass-encrypted.yaml` - Encrypted storage
-- `pvc-nfs.yaml` / `pvc-iscsi.yaml` - PVC examples
-- `pod-with-pvc.yaml` - Pod using a PVC
-- `volumesnapshotclass.yaml` / `volumesnapshot.yaml` - Snapshot examples
-
-## Building
-
-### Build the binary
-```bash
-make build
+- Use [Scoop](https://scoop.sh)
+```powershell
+scoop install tektoncd-cli
 ```
 
-### Build container images
-```bash
-# Build Alpine-based image (standard Kubernetes)
-make docker-build
+- Use [Powershell](https://docs.microsoft.com/en-us/powershell) [released zip](https://github.com/tektoncd/cli/releases/download/v0.37.0/tkn_0.37.0_Windows_x86_64.zip)
 
-# Build UBI-based image (Red Hat OpenShift certification)
-make build-ubi
+```powershell
+#Create directory
+New-Item -Path "$HOME/tektoncd/cli" -Type Directory
+# Download file
+Start-BitsTransfer -Source https://github.com/tektoncd/cli/releases/download/v0.37.0/tkn_0.37.0_Windows_x86_64.zip -Destination "$HOME/tektoncd/cli/."
+# Uncompress zip file
+Expand-Archive $HOME/tektoncd/cli/*.zip -DestinationPath C:\Users\Developer\tektoncd\cli\.
+#Add to Windows `Environment Variables`
+[Environment]::SetEnvironmentVariable("Path",$($env:Path + ";$Home\tektoncd\cli"),'User')
 ```
 
-### Push to quay.io
-```bash
-# Login to quay.io
-docker login quay.io
+### Linux tarballs
 
-# Push UBI image to quay.io/truenas_solutions
-make push-ubi
+* [Linux AMD 64](https://github.com/tektoncd/cli/releases/download/v0.37.0/tkn_0.37.0_Linux_x86_64.tar.gz)
 
-# Push all images (driver, operator, bundle)
-make push-all
-```
+  ```shell
+  # Get the tar.xz
+  curl -LO https://github.com/tektoncd/cli/releases/download/v0.37.0/tkn_0.37.0_Linux_x86_64.tar.gz
+  # Extract tkn to your PATH (e.g. /usr/local/bin)
+  sudo tar xvzf tkn_0.37.0_Linux_x86_64.tar.gz -C /usr/local/bin/ tkn
+  ```
 
-### Run tests
-```bash
-make test
-```
+* [Linux AARCH 64](https://github.com/tektoncd/cli/releases/download/v0.37.0/tkn_0.37.0_Linux_aarch64.tar.gz)
 
-## Container Images
+  ```shell
+  # Get the tar.xz
+  curl -LO https://github.com/tektoncd/cli/releases/download/v0.37.0/tkn_0.37.0_Linux_aarch64.tar.gz
+  # Extract tkn to your PATH (e.g. /usr/local/bin)
+  sudo tar xvzf tkn_0.37.0_Linux_aarch64.tar.gz -C /usr/local/bin/ tkn
+  ```
 
-Images are published to [quay.io/truenas_solutions](https://quay.io/organization/truenas_solutions):
+* [Linux IBM Z](https://github.com/tektoncd/cli/releases/download/v0.37.0/tkn_0.37.0_Linux_s390x.tar.gz)
 
-| Image | Description |
-|-------|-------------|
-| `quay.io/truenas_solutions/truenas-csi` | CSI driver (UBI-based for OpenShift) |
-| `quay.io/truenas_solutions/truenas-csi-operator` | Kubernetes operator |
-| `quay.io/truenas_solutions/truenas-csi-operator-bundle` | OLM bundle for OperatorHub |
+  ```shell
+  # Get the tar.gz
+  curl -LO https://github.com/tektoncd/cli/releases/download/v0.37.0/tkn_0.37.0_Linux_s390x.tar.gz
+  # Extract tkn to your PATH (e.g. /usr/local/bin)
+  sudo tar xvzf tkn_0.37.0_Linux_s390x.tar.gz -C /usr/local/bin/ tkn
+  ```
 
-## Running the Demo
+* [Linux IBM P](https://github.com/tektoncd/cli/releases/download/v0.37.0/tkn_0.37.0_Linux_ppc64le.tar.gz)
 
-For an interactive demonstration of all driver features using a local Kind cluster, see [docs/demo.md](docs/demo.md).
+  ```shell
+  # Get the tar.gz
+  curl -LO https://github.com/tektoncd/cli/releases/download/v0.37.0/tkn_0.37.0_Linux_ppc64le.tar.gz
+  # Extract tkn to your PATH (e.g. /usr/local/bin)
+  sudo tar xvzf tkn_0.37.0_Linux_ppc64le.tar.gz -C /usr/local/bin/ tkn
+  ```
 
-## OpenShift
+### Linux RPMs
 
-The TrueNAS CSI Driver supports Red Hat OpenShift 4.20+ and is designed for OperatorHub distribution.
+  If you are running on any of the following rpm based distros:
 
-### Quick Start (OpenShift)
+  * Latest Fedora and the two versions behind.
+  * Centos Stream
+  * EPEL
+  * Latest RHEL
 
-1. **Install via OperatorHub**
-   - Navigate to **Operators** > **OperatorHub**
-   - Search for "TrueNAS CSI"
-   - Click **Install**
+  you would be able to use [@chmouel](https://github.com/chmouel)'s unofficial copr package
+  repository by running the following commands:
 
-2. **Create credentials secret**
-   ```yaml
-   apiVersion: v1
-   kind: Secret
-   metadata:
-     name: truenas-api-credentials
-     namespace: truenas-csi
-   stringData:
-     api-key: "YOUR-API-KEY"
+  ```shell
+  dnf copr enable chmouel/tektoncd-cli
+  dnf install tektoncd-cli
+  ```
+
+  * [Binary RPM package](https://github.com/tektoncd/cli/releases/download/v0.37.0/tektoncd-cli-0.37.0_Linux-64bit.rpm)
+
+  On any other RPM based distros, you can install the rpm directly:
+
+   ```shell
+    rpm -Uvh https://github.com/tektoncd/cli/releases/download/v0.37.0/tektoncd-cli-0.37.0_Linux-64bit.rpm
    ```
 
-3. **Create TrueNASCSI resource**
-   ```yaml
-   apiVersion: csi.truenas.io/v1alpha1
-   kind: TrueNASCSI
-   metadata:
-     name: truenas
-   spec:
-     truenasURL: "wss://your-truenas-ip/api/current"
-     credentialsSecret: "truenas-api-credentials"
-     defaultPool: "tank"
-     nfsServer: "your-truenas-ip"
-   ```
+### Linux Debs
 
-### OpenShift Documentation
+  * [Ubuntu PPA](https://launchpad.net/~tektoncd/+archive/ubuntu/cli/+packages)
 
-- [Installation Guide](docs/openshift/installation.md) - Detailed installation steps
-- [Configuration Reference](docs/openshift/configuration.md) - CRD and StorageClass options
-- [Upgrade Guide](docs/openshift/upgrade.md) - Upgrade procedures
-- [Red Hat Certification Guide](docs/openshift/certification.md) - Certification process and requirements
+  If you are running on the latest rolling Ubuntu or Debian, you can use the TektonCD CLI PPA:
 
-## Demo Scripts
+  ```shell
+  sudo apt update;sudo apt install -y gnupg
+  sudo apt-key adv --keyserver keyserver.ubuntu.com --recv-keys 3EFE0E0A2F2F60AA
+  echo "deb http://ppa.launchpad.net/tektoncd/cli/ubuntu jammy main"|sudo tee /etc/apt/sources.list.d/tektoncd-ubuntu-cli.list
+  sudo apt update && sudo apt install -y tektoncd-cli
+  ```
 
-Interactive demo scripts are provided to test the CSI driver:
+  The PPA may work with older releases, but that hasn't been tested.
 
-### Standard Kubernetes (Kind)
+  * [Binary DEB package](https://github.com/tektoncd/cli/releases/download/v0.37.0/tektoncd-cli-0.37.0_Linux-64bit.deb)
 
-```bash
-# Set TrueNAS connection details in deploy/truenas-csi-driver.yaml, then:
-./demo-simple.sh
+  On any other Debian or Ubuntu based distro, you can simply install the binary package directly with `dpkg`:
+
+  ```shell
+  curl -LO https://github.com/tektoncd/cli/releases/download/v0.37.0/tektoncd-cli-0.37.0_Linux-64bit.deb
+  dpkg -i tektoncd-cli-0.37.0_Linux-64bit.deb
+  ```
+
+### NixOS/Nix
+
+You can install `tektoncd-cli` from [nixpkgs](https://github.com/NixOS/nixpkgs) on any system that supports the `nix` package manager.
+
+```shell
+nix-env --install tektoncd-cli
+```
+### Arch / Manjaro
+
+You can install [`tekton-cli`](https://archlinux.org/packages/extra/x86_64/tekton-cli/) from the official arch package repository :
+
+```shell
+pacman -S tekton-cli
 ```
 
-### OpenShift (CRC/OpenShift Local)
+### Homebrew on Linux
 
-```bash
-# Set environment variables
-export TRUENAS_IP=192.168.1.100
-export TRUENAS_API_KEY=your-api-key
-export TRUENAS_POOL=tank
+You can install the latest tektoncd-cli if you are using [Homebrew on Linux](https://docs.brew.sh/Homebrew-on-Linux) as for the osx version you need to simply do :
 
-# Run the demo
-./demo-openshift.sh
+```shell
+brew install tektoncd-cli
 ```
 
-Both demos provide interactive menus to test NFS/iSCSI provisioning, volume expansion, snapshots, and cloning.
+### Source install
 
-## Contributing
+  If you have [go](https://golang.org/) installed and you want to compile the CLI from source, you can checkout the [Git repository](https://github.com/tektoncd/cli) and run the following commands:
 
-- Report issues: https://github.com/truenas/truenas-csi/issues
-- Submit pull requests: https://github.com/truenas/truenas-csi/pulls
+  ```shell
+  make bin/tkn
+  ```
 
-## License
+  This will output the `tkn` binary in `bin/tkn`
 
-GNU General Public License 3.0
+### `tkn` as a `kubectl` plugin
+
+`kubectl` will find any binary named `kubectl-*` on your PATH and consider it as a plugin.
+After installing tkn, create a link as kubectl-tkn
+  ```shell
+ln -s /usr/local/bin/tkn /usr/local/bin/kubectl-tkn
+  ```
+Run the following to confirm tkn is available as a plugin:
+  ```shell
+kubectl plugin list
+  ```
+You should see the following after running kubectl plugin list if tkn is available as a plugin:
+  ```shell
+/usr/local/bin/kubectl-tkn
+```
+If the output above is shown, run kubectl-tkn to see the list of available tkn commands to run.
+
+## Useful Commands
+
+The following commands help you understand and effectively use the Tekton CLI:
+
+ * `tkn help:` Displays a list of the commands with helpful information.
+ * [`tkn bundle:`](docs/cmd/tkn_bundle.md) Manage Tekton [bundles](https://github.com/tektoncd/pipeline/blob/main/docs/tekton-bundle-contracts.md)
+ * [`tkn clustertask:`](docs/cmd/tkn_clustertask.md) Parent command of the ClusterTask command group.
+ * [`tkn clustertriggerbinding:`](docs/cmd/tkn_clustertriggerbinding.md) Parent command of the ClusterTriggerBinding command group.
+ * [`tkn completion:`](docs/cmd/tkn_completion.md) Outputs a BASH, ZSH, Fish or PowerShell completion script for `tkn` to allow command completion with Tab.
+ * [`tkn customrun:`](docs/cmd/tkn_customrun.md) Parent command of the Customrun command group.
+ * [`tkn eventlistener:`](docs/cmd/tkn_eventlistener.md) Parent command of the Eventlistener command group.
+ * [`tkn hub:`](docs/cmd/tkn_hub.md) Search and install Tekton Resources from [Hub](https://hub.tekton.dev)
+ * [`tkn pipeline:`](docs/cmd/tkn_pipeline.md) Parent command of the Pipeline command group.
+ * [`tkn pipelinerun:`](docs/cmd/tkn_pipelinerun.md) Parent command of the Pipelinerun command group.
+ * [`tkn task:`](docs/cmd/tkn_task.md) Parent command of the Task command group.
+ * [`tkn taskrun:`](docs/cmd/tkn_taskrun.md) Parent command of the Taskrun command group.
+ * [`tkn triggerbinding:`](docs/cmd/tkn_triggerbinding.md) Parent command of the Triggerbinding command group.
+ * [`tkn triggertemplate:`](docs/cmd/tkn_triggertemplate.md) Parent command of the Triggertemplate command group.
+ * [`tkn version:`](docs/cmd/tkn_version.md) Outputs the cli version.
+
+For every `tkn` command, you can use `-h` or `--help` flags to display specific help for that command.
+
+## Disable Color and Emojis in Output
+
+For many `tkn` commands, color and emojis by default will appear in command
+output.
+
+It will only shows if you are in interactive shell with a [standard
+input](https://en.wikipedia.org/wiki/Standard_streams#Standard_input_(stdin))
+attached. If you pipe the tkn command or run it in a non interactive way (ie:
+from tekton itself in a Task) the coloring and emojis will *always* be disabled.
+
+`tkn` offers two approaches for disabling color and emojis from command output.
+
+To remove the color and emojis from all `tkn` command output, set the environment variable `NO_COLOR`, such as shown below:
+
+```shell
+export NO_COLOR=""
+```
+
+More information on `NO_COLOR` can be found in the [`NO_COLOR` documentation](https://no-color.org/).
+
+To remove color and emojis from the output of a single command execution, the `--no-color` option can be used with any command,
+such as in the example below:
+
+```bash
+tkn taskrun describe --no-color
+```
+
+
+## Want to contribute
+
+We are so excited to have you!
+
+- See [CONTRIBUTING.md](CONTRIBUTING.md) for an overview of our processes
+- See [DEVELOPMENT.md](DEVELOPMENT.md) for how to get started
+- See [ROADMAP.md](ROADMAP.md) for the current roadmap
+- See [releases.md][releases.md] for our release cadence and processes
+- Look at our
+  [good first issues](https://github.com/tektoncd/cli/issues?q=is%3Aissue+is%3Aopen+label%3A%22good+first+issue%22)
+  and our
+  [help wanted issues](https://github.com/tektoncd/cli/issues?q=is%3Aissue+is%3Aopen+label%3A%22help+wanted%22)

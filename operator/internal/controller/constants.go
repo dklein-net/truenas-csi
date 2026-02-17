@@ -56,9 +56,10 @@ const (
 	VolumeSocketDir       = "socket-dir"
 	VolumeRegistrationDir = "registration-dir"
 	VolumePluginDir       = "plugin-dir"
-	VolumePodsMountDir    = "pods-mount-dir"
+	VolumeKubeletDir      = "kubelet-dir"
 	VolumeDeviceDir       = "device-dir"
 	VolumeISCSIDir        = "iscsi-dir"
+	VolumeISCSILib        = "iscsi-lib"
 	VolumeHostRoot        = "host-root"
 	VolumeHostFstab       = "host-fstab"
 )
@@ -67,9 +68,10 @@ const (
 const (
 	HostPathRegistrationDir = "/var/lib/kubelet/plugins_registry/"
 	HostPathPluginDir       = "/var/lib/kubelet/plugins/csi.truenas.io/"
-	HostPathPodsMountDir    = "/var/lib/kubelet/pods"
+	HostPathKubeletDir      = "/var/lib/kubelet"
 	HostPathDeviceDir       = "/dev"
 	HostPathISCSIDir        = "/etc/iscsi"
+	HostPathISCSILib        = "/var/lib/iscsi"
 	HostPathRoot            = "/"
 	HostPathFstab           = "/etc/fstab"
 )
@@ -129,6 +131,7 @@ const (
 const (
 	SidecarLogLevel = 5
 	DefaultFSType   = "ext4"
+	SidecarTimeout  = "60s"
 )
 
 // iSCSI paths (for node container initialization)

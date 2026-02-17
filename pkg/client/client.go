@@ -15,6 +15,7 @@ import (
 	"github.com/coder/websocket"
 	"github.com/coder/websocket/wsjson"
 	"github.com/go-logr/logr"
+	"golang.org/x/sync/semaphore"
 )
 
 // Default configuration values
@@ -27,7 +28,9 @@ const (
 	defaultReconnectMin        = 1 * time.Second
 	defaultReconnectMax        = 60 * time.Second
 	defaultReconnectFactor     = 2.0
-	jsonRPCVersion             = "2.0"
+	defaultReconnectPollInterval = 100 * time.Millisecond
+	defaultMaxConcurrentCalls    = 4
+	jsonRPCVersion               = "2.0"
 
 	// WebSocket read limit - TrueNAS can return large JSON responses for list operations
 	// Default is 32KB which is too small for datasets/snapshots with many entries
@@ -66,6 +69,10 @@ type Config struct {
 	ReconnectFactor    float64
 	// MaxReconnectAttempts limits reconnection attempts. 0 means unlimited.
 	MaxReconnectAttempts int
+	// MaxConcurrentCalls limits the number of concurrent WebSocket API calls.
+	// This prevents overwhelming TrueNAS when many operations happen simultaneously.
+	// 0 means use the default (4).
+	MaxConcurrentCalls int
 	// Logger is an optional structured logger. If not provided, logging is disabled.
 	Logger logr.Logger
 }
@@ -176,6 +183,9 @@ type Client struct {
 
 	// Reconnection guard
 	reconnecting atomic.Bool
+
+	// Concurrency limiter for WebSocket calls
+	callSem *semaphore.Weighted
 }
 
 // New creates a new TrueNAS client with the given configuration.
@@ -200,6 +210,10 @@ func New(cfg Config) *Client {
 		cfg.TLSConfig = &tls.Config{InsecureSkipVerify: true}
 	}
 
+	if cfg.MaxConcurrentCalls == 0 {
+		cfg.MaxConcurrentCalls = defaultMaxConcurrentCalls
+	}
+
 	// Use discard logger if none provided
 	log := cfg.Logger
 	if log.GetSink() == nil {
@@ -207,9 +221,10 @@ func New(cfg Config) *Client {
 	}
 
 	return &Client{
-		config: cfg,
-		log:    log,
-		done:   make(chan struct{}),
+		config:  cfg,
+		log:     log,
+		done:    make(chan struct{}),
+		callSem: semaphore.NewWeighted(int64(cfg.MaxConcurrentCalls)),
 	}
 }
 
@@ -478,16 +493,85 @@ func (c *Client) Connected() bool {
 	return c.conn != nil
 }
 
-// Call invokes a JSON-RPC method. Returns ErrNotConnected if disconnected.
+// Call invokes a JSON-RPC method with automatic retry on connection loss.
+// Concurrent calls are limited by MaxConcurrentCalls to prevent overwhelming TrueNAS.
+// If the connection drops during a call, it waits for reconnection and retries.
+// The caller's context deadline bounds the total time including retries.
 func (c *Client) Call(ctx context.Context, method string, params, result any) error {
-	c.connMu.RLock()
-	conn := c.conn
-	c.connMu.RUnlock()
-
-	if conn == nil {
+	if err := c.callSem.Acquire(ctx, 1); err != nil {
 		return ErrNotConnected
 	}
-	return c.callOn(ctx, conn, method, params, result)
+	defer c.callSem.Release(1)
+
+	for {
+		c.connMu.RLock()
+		conn := c.conn
+		c.connMu.RUnlock()
+
+		if conn == nil {
+			if err := c.waitForConnection(ctx); err != nil {
+				return err
+			}
+			continue
+		}
+
+		err := c.callOn(ctx, conn, method, params, result)
+		if err == nil {
+			return nil
+		}
+
+		// Retry on transient connection errors
+		if c.isRetryableError(err) {
+			c.log.V(logLevelInfo).Info("Retrying after connection loss", "method", method)
+			if waitErr := c.waitForConnection(ctx); waitErr != nil {
+				return err // Return original error if we can't reconnect in time
+			}
+			continue
+		}
+
+		return err
+	}
+}
+
+// waitForConnection blocks until the client has an active connection,
+// the context is cancelled, or the client is closed.
+func (c *Client) waitForConnection(ctx context.Context) error {
+	// Fast path: already connected
+	if c.Connected() {
+		return nil
+	}
+
+	ticker := time.NewTicker(defaultReconnectPollInterval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return ErrNotConnected
+		case <-c.done:
+			return ErrClosed
+		case <-ticker.C:
+			if c.Connected() {
+				return nil
+			}
+		}
+	}
+}
+
+// isRetryableError returns true for transient connection errors that should be retried.
+// It only considers an error retryable if the connection is actually down,
+// distinguishing real disconnects from TrueNAS RPC errors that happen to use code -1.
+func (c *Client) isRetryableError(err error) bool {
+	if !c.Connected() {
+		if IsConnectionError(err) {
+			return true
+		}
+		var rpcErr *RPCError
+		if errors.As(err, &rpcErr) && rpcErr.Code == rpcErrCodeConnectionLost {
+			return true
+		}
+	}
+	return false
 }
 
 // callOn sends a JSON-RPC request and waits for the response.

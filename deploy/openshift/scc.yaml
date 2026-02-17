@@ -13,6 +13,7 @@ metadata:
     app.kubernetes.io/component: node
     app.kubernetes.io/managed-by: truenas-csi-operator
 allowPrivilegedContainer: true
+allowHostIPC: true
 allowHostNetwork: true
 allowHostPID: true
 allowHostPorts: true

@@ -87,29 +87,31 @@ The CSI driver requires root privileges for mount operations:
 
 This exempts the container from the `RunAsNonRoot` check.
 
-### Step 3: Run Preflight Checks
+### Step 3: Run Preflight Checks and Submit
+
+Run preflight with `--submit` to check and submit results in one step.
+The Pyxis API token is available from Red Hat Partner Connect under **Account Settings**.
+Set it as the `PYXIS_API_KEY` environment variable.
 
 ```bash
-# Check driver image
-preflight check container quay.io/truenas_solutions/truenas-csi:v0.1.0
-
-# Check operator image
-preflight check container quay.io/truenas_solutions/truenas-csi-operator:v0.1.0
-```
-
-Expected results:
-- Driver: All pass except `RunAsNonRoot` (exempted via Privileged setting)
-- Operator: All pass
-
-### Step 4: Submit Results
-
-```bash
-# Submit with API token from Partner Connect
-preflight check container quay.io/truenas_solutions/truenas-csi:v0.1.0 \
+# Submit driver image (project: 6984e4411c8ca46590f85669)
+PFLT_PYXIS_API_TOKEN="$PYXIS_API_KEY" preflight check container \
+  quay.io/truenas_solutions/truenas-csi:v1.0.0 \
   --submit \
-  --pyxis-api-token=<your-token> \
-  --certification-project-id=<project-id>
+  --certification-component-id=6984e4411c8ca46590f85669
+
+# Submit operator image (project: 6984f4f22806a3280f06bc67)
+PFLT_PYXIS_API_TOKEN="$PYXIS_API_KEY" preflight check container \
+  quay.io/truenas_solutions/truenas-csi-operator:v1.0.0 \
+  --submit \
+  --certification-component-id=6984f4f22806a3280f06bc67
 ```
+
+Both images should report `Preflight result: PASSED`.
+
+**Note:** When run with `--submit` and the correct project ID, the driver image passes all
+checks (including `RunAsNonRoot`) because the project is configured as Privileged in Partner Connect.
+Without `--submit`, `RunAsNonRoot` will show as FAILED — this is expected and can be ignored for local testing.
 
 ## Operator Certification
 
@@ -158,106 +160,202 @@ make bundle-push
 
 ## CSI Certification (Badge)
 
-CSI certification is a functional badge that validates storage capabilities.
+CSI certification is a functional badge (cert ID on Red Hat Connect) that validates storage
+capabilities by running the OpenShift E2E CSI test suite against the driver.
 
 ### Prerequisites
 
 Before CSI certification:
-1. Container images must be certified and published
-2. Operator must be certified and published
-3. CSI sidecar images must be certified (or use Red Hat certified versions)
+1. Container images must be certified and published (or at least submitted)
+2. Operator must be certified and published (or at least submitted)
+3. An OpenShift cluster with the driver deployed and working (CRC is sufficient)
+4. TrueNAS SCALE with a pool that has enough free space (~100 GiB recommended)
+5. StorageClasses and a VolumeSnapshotClass configured for each protocol
 
-### CSI Capabilities
+### Test Environment Setup
 
-The driver declares these capabilities in `deploy/openshift/csi-capabilities.yaml`:
+Ensure the following are deployed on the OpenShift cluster:
 
-**Controller Capabilities:**
-- `CREATE_DELETE_VOLUME`
-- `CREATE_DELETE_SNAPSHOT`
-- `CLONE_VOLUME`
-- `EXPAND_VOLUME`
-- `LIST_VOLUMES`
-- `GET_CAPACITY`
+```bash
+# Verify driver pods are running
+oc get pods -n truenas-csi
 
-**Node Capabilities:**
-- `STAGE_UNSTAGE_VOLUME`
-- `GET_VOLUME_STATS`
-- `EXPAND_VOLUME`
+# Verify StorageClasses exist
+oc get sc truenas-nfs truenas-iscsi
 
-**Supported Protocols:**
-- NFS (ReadWriteMany)
-- iSCSI (ReadWriteOnce, block volumes)
+# Verify VolumeSnapshotClass exists
+oc get volumesnapshotclass truenas-snapclass
 
-**Features:**
-- Dynamic provisioning
-- Volume expansion
-- Volume snapshots
-- Volume cloning
-- Raw block volumes
+# VolumeSnapshot CRDs and snapshot controller must be installed
+# (CRC does not include these by default)
+oc get crd volumesnapshots.snapshot.storage.k8s.io
+```
+
+### Test Manifests
+
+Tests are run separately for each protocol (NFS and iSCSI). Each run uses a manifest
+file that declares the driver's capabilities for that protocol.
+
+**NFS manifest** (`manifest-nfs.yaml`):
+```yaml
+ShortName: truenas-nfs
+StorageClass:
+  FromExistingClassName: truenas-nfs
+SnapshotClass:
+  FromExistingClassName: truenas-snapclass
+DriverInfo:
+  Name: csi.truenas.io
+  Capabilities:
+    persistence: true
+    exec: true
+    multipods: true
+    RWX: true
+    block: false
+    fsGroup: true
+    snapshotDataSource: true
+    pvcDataSource: true
+    controllerExpansion: true
+    nodeExpansion: false
+    volumeLimits: false
+    topology: true
+```
+
+**iSCSI manifest** (`manifest-iscsi.yaml`):
+```yaml
+ShortName: truenas-iscsi
+StorageClass:
+  FromExistingClassName: truenas-iscsi
+SnapshotClass:
+  FromExistingClassName: truenas-snapclass
+DriverInfo:
+  Name: csi.truenas.io
+  Capabilities:
+    persistence: true
+    exec: true
+    multipods: true
+    RWX: false
+    block: true
+    fsGroup: true
+    snapshotDataSource: true
+    pvcDataSource: true
+    controllerExpansion: true
+    nodeExpansion: true
+    volumeLimits: false
+    singleNodeVolume: true
+    topology: true
+```
+
+Key differences between protocols:
+- NFS: `RWX: true`, `block: false`, `nodeExpansion: false` (server-side only)
+- iSCSI: `RWX: false`, `block: true`, `nodeExpansion: true`, `singleNodeVolume: true`
 
 ### Running CSI Certification Tests
 
-CSI certification requires running the OpenShift End-to-End CSI tests.
+Tests are run using the containerized `ose-tests` image from Red Hat's registry.
+You must run the tests **separately for each protocol** since they use different manifests.
 
-#### Option 1: Manual Testing
+#### Step 1: Prepare the kubeconfig
 
 ```bash
-# Clone the OpenShift tests
-git clone https://github.com/openshift/origin.git
-cd origin
-
-# Build the test binary
-make build WHAT=cmd/openshift-tests
-
-# Run CSI tests
-./openshift-tests run openshift/csi \
-  --provider '{"type":"skeleton"}' \
-  --junit-dir=/tmp/csi-test-results
+# Copy kubeconfig to a working directory
+cp ~/.kube/config /path/to/workdir/kubeconfig.yaml
 ```
 
-#### Option 2: DCI (Distributed CI)
+#### Step 2: Run tests for each protocol
 
-Red Hat provides DCI for automated certification testing:
+Use `--network=host` so the test container can reach the cluster API.
+Use `--max-parallel-tests=1` for serialized execution (prevents overloading the cluster).
 
-1. Set up DCI agent: https://docs.distributed-ci.io/
-2. Configure the CSI manifest file
-3. Run certification pipeline
+```bash
+# NFS tests
+docker run --rm --network=host \
+  -v /path/to/workdir/kubeconfig.yaml:/kubeconfig.yaml:z \
+  -v /path/to/workdir/manifest-nfs.yaml:/manifest.yaml:z \
+  -v /path/to/workdir/results-nfs:/results:z \
+  registry.redhat.io/openshift4/ose-tests-rhel9:v4.20 \
+  openshift-tests run openshift/csi \
+    --provider '{"type":"skeleton"}' \
+    --max-parallel-tests=1 \
+    --timeout 20m \
+    --junit-dir /results \
+    -o /results/results.txt \
+    --file /manifest.yaml
 
-### CSI Test Categories
-
-Tests are run for each protocol (NFS, iSCSI):
-
-| Category | Description |
-|----------|-------------|
-| Provisioning | Create/delete volumes |
-| Snapshots | Create/restore snapshots |
-| Cloning | Clone volumes |
-| Expansion | Resize volumes |
-| Mount | Mount/unmount operations |
-| Block | Raw block volume support |
-
-### Test Manifest
-
-Create a manifest file for DCI testing:
-
-```yaml
-apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: csi-test-manifest
-data:
-  driver: csi.truenas.io
-  storageClass: truenas-nfs
-  snapshotClass: truenas-snapshots
-  capabilities:
-    - persistence
-    - block
-    - fsGroup
-    - exec
-    - snapshotDataSource
-    - pvcDataSource
-    - expansion
+# iSCSI tests
+docker run --rm --network=host \
+  -v /path/to/workdir/kubeconfig.yaml:/kubeconfig.yaml:z \
+  -v /path/to/workdir/manifest-iscsi.yaml:/manifest.yaml:z \
+  -v /path/to/workdir/results-iscsi:/results:z \
+  registry.redhat.io/openshift4/ose-tests-rhel9:v4.20 \
+  openshift-tests run openshift/csi \
+    --provider '{"type":"skeleton"}' \
+    --max-parallel-tests=1 \
+    --timeout 20m \
+    --junit-dir /results \
+    -o /results/results.txt \
+    --file /manifest.yaml
 ```
+
+**Notes:**
+- The `ose-tests` image requires a Red Hat registry pull secret (`docker login registry.redhat.io`)
+- Serialized execution (`--max-parallel-tests=1`) takes longer (~45m NFS, ~1h iSCSI) but produces clean results
+- The `--timeout 20m` flag gives extra per-test headroom for slower environments
+- Result files will be owned by root; run `sudo chown -R $(id -u):$(id -g) results-*/` after
+
+#### Step 3: Verify results
+
+Check the JUnit XML for failures:
+
+```bash
+# Should show failures="0" (ignore the MonitorTest failure — it's a platform-level check, not CSI)
+grep 'testsuite.*failures' results-nfs/junit_e2e__*.xml
+grep 'testsuite.*failures' results-iscsi/junit_e2e__*.xml
+```
+
+Expected results:
+- **NFS**: ~55 pass, 0 fail, ~227 skip
+- **iSCSI**: ~74 pass, 0 fail, ~206 skip
+
+The `e2e-monitor-tests__*.xml` file contains platform monitor failures (API server disruption, etc.)
+which are CRC infrastructure issues, not CSI driver failures. These do not affect certification.
+
+### Submitting CSI Test Results
+
+CSI functional test results are submitted through the Red Hat Connect web portal.
+
+#### Step 1: Package the results
+
+```bash
+cd operator/certification-results
+
+tar czf truenas-csi-functional-cert-results.tar.gz \
+  manifest-iscsi.yaml \
+  manifest-nfs.yaml \
+  iscsi/junit_e2e__*.xml \
+  nfs/junit_e2e__*.xml
+```
+
+Include only the `junit_e2e__*.xml` files (the actual CSI test results) and the manifests.
+The `e2e-monitor-tests__*.xml` and `results.txt` files are not required for submission.
+
+#### Step 2: Upload to Red Hat Connect
+
+1. Log in to [Red Hat Partner Connect](https://connect.redhat.com)
+2. Navigate to your CSI functional certification project
+3. On the **Summary** tab, go to the **Files** section
+4. Click **Upload** and attach the tarball
+5. Add a description, e.g.: `TrueNAS CSI v1.0.0 - OpenShift 4.20 e2e results: iSCSI (74 pass/0 fail) and NFS (55 pass/0 fail) JUnit XMLs + test manifests`
+6. Optionally add comments in the **Discussions** section explaining the test environment
+
+#### Step 3: Wait for review
+
+A Red Hat certification engineer will manually review:
+- The JUnit XMLs to verify 0 test failures
+- The test manifests to confirm declared capabilities match the results
+- That the tests were run on a supported OpenShift version
+
+Once approved, the CSI functional certification moves to "completed/published" status.
+This is a prerequisite for the operator bundle to pass the Hydra `query-publishing-checklist`.
 
 ## Certification Maintenance
 
@@ -265,13 +363,22 @@ data:
 
 When releasing a new version:
 
-1. Update version in all Dockerfiles and manifests
-2. Rebuild and push images:
+1. Update `VERSION` in `Makefile` and `operator/Makefile`
+2. Update `version` labels in `Dockerfile.ubi` and `operator/Dockerfile.ubi`
+3. Build, push, and tag all images:
    ```bash
    make release VERSION=x.y.z
    ```
-3. Re-run preflight checks
-4. Submit updated images to Partner Connect
+4. Regenerate the OLM bundle (resolves image digests automatically):
+   ```bash
+   cd operator && make bundle USE_IMAGE_DIGESTS=true
+   ```
+5. Build and push the bundle image:
+   ```bash
+   make bundle-build bundle-push
+   ```
+6. Submit preflight results for driver and operator images (see Container Certification above)
+7. Re-run CSI e2e tests and submit results (see CSI Certification above)
 
 ### OpenShift Version Support
 
@@ -324,42 +431,48 @@ Red Hat requires annual recertification:
 
 ## Quick Reference
 
+### Red Hat Connect Project IDs
+
+| Image | Project ID |
+|-------|------------|
+| Driver (`truenas-csi`) | `6984e4411c8ca46590f85669` |
+| Operator (`truenas-csi-operator`) | `6984f4f22806a3280f06bc67` |
+| Bundle (`truenas-csi-operator-bundle`) | `6984fe14a9bd925b3f2f2502` |
+
 ### Build and Push All Images
 
 ```bash
 # Build and push everything including 'latest' tag
-make release VERSION=0.1.0
+make release VERSION=1.0.0
+
+# Regenerate bundle with digests, then build and push
+cd operator && make bundle USE_IMAGE_DIGESTS=true
+cd .. && make bundle-build bundle-push
 ```
 
-### Run All Certification Checks
+### Submit Container Preflight Results
 
 ```bash
-# Container checks
-preflight check container quay.io/truenas_solutions/truenas-csi:v0.1.0
-preflight check container quay.io/truenas_solutions/truenas-csi-operator:v0.1.0
+# Requires PYXIS_API_KEY environment variable
+PFLT_PYXIS_API_TOKEN="$PYXIS_API_KEY" preflight check container \
+  quay.io/truenas_solutions/truenas-csi:v1.0.0 \
+  --submit --certification-component-id=6984e4411c8ca46590f85669
 
-# Operator checks
-cd operator
-make test              # Unit tests
-make test-e2e          # E2E tests
-operator-sdk scorecard bundle/
-
-# Integration tests
-make test-integration TRUENAS_IP=<ip> TRUENAS_API_KEY=<key>
+PFLT_PYXIS_API_TOKEN="$PYXIS_API_KEY" preflight check container \
+  quay.io/truenas_solutions/truenas-csi-operator:v1.0.0 \
+  --submit --certification-component-id=6984f4f22806a3280f06bc67
 ```
 
 ### Certification Checklist
 
-- [ ] Container images built with UBI base
-- [ ] Required labels added to all images
-- [ ] License file at `/licenses/LICENSE`
-- [ ] Driver set as "Privileged" in Partner Connect
-- [ ] Preflight passes for all containers
-- [ ] Scorecard passes (5/5)
-- [ ] Unit tests pass
-- [ ] E2E tests pass
-- [ ] Integration tests pass (11/11)
-- [ ] CSI capabilities manifest created
-- [ ] OpenShift E2E CSI tests pass
-- [ ] Documentation complete
-- [ ] Submitted to Partner Connect
+- [ ] Container images built with UBI base (`make build-ubi`, `make operator-build`)
+- [ ] Required labels added to all images (name, vendor, version, release, summary, description, maintainer)
+- [ ] License file at `/licenses/LICENSE` in both images
+- [ ] Driver set as "Privileged" in Partner Connect settings
+- [ ] Preflight passes and submitted for driver and operator images
+- [ ] OLM bundle generated with image digests (`make bundle USE_IMAGE_DIGESTS=true`)
+- [ ] Scorecard passes (`operator-sdk scorecard bundle/`)
+- [ ] CSI E2E tests pass for NFS (0 failures)
+- [ ] CSI E2E tests pass for iSCSI (0 failures)
+- [ ] Test results packaged and uploaded to CSI functional certification on Partner Connect
+- [ ] Operator bundle PR submitted to `redhat-openshift-ecosystem/certified-operators`

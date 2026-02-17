@@ -162,10 +162,15 @@ func (h *ISCSIHandler) Stage(ctx context.Context, req *StageRequest) (*StageResu
 
 	h.log.V(LogLevelDebug).Info("iSCSI connected", "device", devicePath)
 
-	// Persist connector info for cleanup on unstage
-	// Note: csi-lib-iscsi Connect() takes a value copy, so device info isn't
-	// populated in our connector. We only need TargetIqn and TargetPortals for
-	// disconnection, which we already have.
+	// Persist connector info for cleanup on unstage.
+	// Connect() takes a value copy so device info isn't populated in our
+	// original connector. We must set it from the returned devicePath so that
+	// block volume publish can find the device later.
+	if devicePath != "" {
+		deviceName := filepath.Base(devicePath) // e.g. "sda" from "/dev/sda"
+		connector.MountTargetDevice = &iscsilib.Device{Name: deviceName}
+		connector.Devices = []iscsilib.Device{{Name: deviceName}}
+	}
 	cpath := connectorPath(req.VolumeID)
 	if err := iscsilib.PersistConnector(connector, cpath); err != nil {
 		h.log.Info("Failed to persist connector info", "error", err)
@@ -192,6 +197,16 @@ func (h *ISCSIHandler) Stage(ctx context.Context, req *StageRequest) (*StageResu
 	h.log.V(LogLevelDebug).Info("FormatAndMount device", "device", devicePath, "stagingPath", req.StagingPath, "fsType", fsType)
 	if err := h.mounter.FormatAndMount(devicePath, req.StagingPath, fsType, req.MountFlags); err != nil {
 		return nil, fmt.Errorf("failed to format and mount device: %w", err)
+	}
+
+	// Resize filesystem if the block device is larger (e.g., snapshot restored
+	// to a larger PVC). FormatAndMount skips formatting when a filesystem
+	// already exists, so the filesystem may be smaller than the ZVOL.
+	if needsResize, err := h.resizer.NeedResize(devicePath, req.StagingPath); err == nil && needsResize {
+		h.log.Info("Filesystem smaller than device, resizing", "volumeId", req.VolumeID, "device", devicePath)
+		if _, err := h.resizer.Resize(devicePath, req.StagingPath); err != nil {
+			return nil, fmt.Errorf("failed to resize filesystem after mount: %w", err)
+		}
 	}
 
 	h.log.V(LogLevelDebug).Info("iSCSI volume staged", "volumeId", req.VolumeID, "stagingPath", req.StagingPath)

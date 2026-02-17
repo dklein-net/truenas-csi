@@ -564,6 +564,7 @@ func (r *TrueNASCSIReconciler) reconcileNodeDaemonSet(ctx context.Context, csi *
 					ServiceAccountName: NodeServiceAccount,
 					HostNetwork:        true,
 					HostPID:            true,
+					HostIPC:            true,
 					PriorityClassName:  "system-node-critical",
 					NodeSelector:       csi.Spec.NodeSelector,
 					Tolerations: append(csi.Spec.Tolerations, corev1.Toleration{
@@ -640,13 +641,15 @@ func (r *TrueNASCSIReconciler) buildNodeContainer(image string, logLevel int32, 
 			fmt.Sprintf("--v=%d", logLevel),
 		},
 		Env: buildTrueNASEnvVars(csi),
-		// PostStart ensures iscsid is running for iSCSI mounts on RHCOS nodes
+		// PostStart creates an iscsiadm wrapper that uses the host's iSCSI stack
+		// via nsenter. This avoids version mismatches between the container's
+		// iscsiadm/iscsid and the host's kernel iSCSI transport.
 		Lifecycle: &corev1.Lifecycle{
 			PostStart: &corev1.LifecycleHandler{
 				Exec: &corev1.ExecAction{
 					Command: []string{
 						"/bin/sh", "-c",
-						fmt.Sprintf("mkdir -p %s && %s || true", ISCSILockDir, ISCSIDaemonPath),
+						fmt.Sprintf("mkdir -p %s && mv /usr/sbin/iscsiadm /usr/sbin/iscsiadm.orig 2>/dev/null; printf '#!/bin/sh\\nnsenter --mount=/host/proc/1/ns/mnt -- /usr/sbin/iscsiadm \"$@\"\\n' > /usr/sbin/iscsiadm && chmod +x /usr/sbin/iscsiadm", ISCSILockDir),
 					},
 				},
 			},
@@ -687,6 +690,7 @@ func (r *TrueNASCSIReconciler) buildProvisionerSidecar() corev1.Container {
 			"--extra-create-metadata",
 			"--leader-election=true",
 			fmt.Sprintf("--default-fstype=%s", DefaultFSType),
+			fmt.Sprintf("--timeout=%s", SidecarTimeout),
 		},
 		VolumeMounts: []corev1.VolumeMount{socketDirVolumeMount()},
 	})
@@ -700,6 +704,7 @@ func (r *TrueNASCSIReconciler) buildAttacherSidecar() corev1.Container {
 			"--csi-address=/csi/csi.sock",
 			fmt.Sprintf("--v=%d", SidecarLogLevel),
 			"--leader-election=true",
+			fmt.Sprintf("--timeout=%s", SidecarTimeout),
 		},
 		VolumeMounts: []corev1.VolumeMount{socketDirVolumeMount()},
 	})
@@ -713,6 +718,7 @@ func (r *TrueNASCSIReconciler) buildSnapshotterSidecar() corev1.Container {
 			"--csi-address=/csi/csi.sock",
 			fmt.Sprintf("--v=%d", SidecarLogLevel),
 			"--leader-election=true",
+			fmt.Sprintf("--timeout=%s", SidecarTimeout),
 		},
 		VolumeMounts: []corev1.VolumeMount{socketDirVolumeMount()},
 	})
@@ -726,6 +732,7 @@ func (r *TrueNASCSIReconciler) buildResizerSidecar() corev1.Container {
 			"--csi-address=/csi/csi.sock",
 			fmt.Sprintf("--v=%d", SidecarLogLevel),
 			"--leader-election=true",
+			fmt.Sprintf("--timeout=%s", SidecarTimeout),
 		},
 		VolumeMounts: []corev1.VolumeMount{socketDirVolumeMount()},
 	})

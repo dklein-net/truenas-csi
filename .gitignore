@@ -41,6 +41,13 @@ test-deploy.yaml
 # Design Plan
 truenas-csi-plan.md
 
+# Build artifacts
+bin/
+
+# Downloaded binaries
+tkn
+cleanup
+
 # Operator build artifacts
 operator/bin/
 operator/Dockerfile.cross
@@ -51,6 +58,7 @@ operator/bin/k8s/
 # Certification artifacts
 preflight.log
 artifacts/
+operator/certification-results/
 
 # Kubernetes generated files (keep vendored ones)
 !vendor/**/zz_generated.*

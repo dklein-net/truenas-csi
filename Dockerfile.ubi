@@ -33,7 +33,7 @@ FROM registry.access.redhat.com/ubi10/ubi-minimal:latest
 # Required Red Hat certification labels
 LABEL name="truenas-csi" \
       vendor="TrueNAS" \
-      version="0.1.0" \
+      version="1.0.0" \
       release="1" \
       summary="TrueNAS CSI Driver for Kubernetes/OpenShift" \
       description="Container Storage Interface driver for TrueNAS storage systems. Supports NFS and iSCSI protocols with snapshots, clones, and volume expansion." \
@@ -65,6 +65,7 @@ COPY --from=packages /usr/sbin/iscsiadm /usr/sbin/
 COPY --from=packages /usr/sbin/iscsid /usr/sbin/
 COPY --from=packages /usr/lib64/libisns.so* /usr/lib64/
 COPY --from=packages /usr/lib64/libkmod.so* /usr/lib64/
+COPY --from=packages /usr/lib64/libopeniscsiusr.so* /usr/lib64/
 COPY --from=packages /etc/iscsi /etc/iscsi
 
 # Copy filesystem utilities from CentOS

@@ -20,9 +20,10 @@ func buildNodeVolumes() []corev1.Volume {
 	return []corev1.Volume{
 		hostPathVolume(VolumeRegistrationDir, HostPathRegistrationDir, &hostPathDirectoryOrCreate),
 		hostPathVolume(VolumePluginDir, HostPathPluginDir, &hostPathDirectoryOrCreate),
-		hostPathVolume(VolumePodsMountDir, HostPathPodsMountDir, &hostPathDirectory),
+		hostPathVolume(VolumeKubeletDir, HostPathKubeletDir, &hostPathDirectory),
 		hostPathVolume(VolumeDeviceDir, HostPathDeviceDir, nil),
 		hostPathVolume(VolumeISCSIDir, HostPathISCSIDir, &hostPathDirectory),
+		hostPathVolume(VolumeISCSILib, HostPathISCSILib, &hostPathDirectoryOrCreate),
 		hostPathVolume(VolumeHostRoot, HostPathRoot, &hostPathDirectory),
 		hostPathVolume(VolumeSocketDir, HostPathPluginDir, &hostPathDirectoryOrCreate),
 		hostPathVolume(VolumeHostFstab, HostPathFstab, &hostPathFileOrCreate),
@@ -61,9 +62,10 @@ func buildNodeVolumeMounts() []corev1.VolumeMount {
 
 	return []corev1.VolumeMount{
 		{Name: VolumePluginDir, MountPath: "/csi"},
-		{Name: VolumePodsMountDir, MountPath: "/var/lib/kubelet/pods", MountPropagation: &mountPropagationBidirectional},
+		{Name: VolumeKubeletDir, MountPath: "/var/lib/kubelet", MountPropagation: &mountPropagationBidirectional},
 		{Name: VolumeDeviceDir, MountPath: "/dev"},
 		{Name: VolumeISCSIDir, MountPath: "/etc/iscsi", MountPropagation: &mountPropagationBidirectional},
+		{Name: VolumeISCSILib, MountPath: "/var/lib/iscsi", MountPropagation: &mountPropagationBidirectional},
 		{Name: VolumeHostRoot, MountPath: "/host", MountPropagation: &mountPropagationBidirectional},
 		{Name: VolumeHostFstab, MountPath: "/etc/fstab"},
 	}

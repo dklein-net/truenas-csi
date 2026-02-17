@@ -44,6 +44,26 @@ const (
 
 	// iSCSI extent name length limit (TrueNAS enforces max 64 characters)
 	maxISCSIExtentNameLength = 64
+
+	// defaultISCSIBlocksize is the default logical block size for iSCSI extents
+	defaultISCSIBlocksize = 512
+
+	// defaultNFSMapAllUser and defaultNFSMapAllGroup set the NFS share user/group
+	// mapping so all client operations appear as root:wheel on the server.
+	defaultNFSMapAllUser  = "root"
+	defaultNFSMapAllGroup = "wheel"
+)
+
+const (
+	_ = iota
+	KiB = 1 << (10 * iota)
+	MiB
+	GiB
+	TiB
+
+	// minVolumeSize is the minimum volume size accepted by TrueNAS SCALE API.
+	// The API rejects refquota/volsize values between 1 and 1 GiB.
+	minVolumeSize = GiB
 )
 
 // Validation sets use map[T]struct{} for memory efficiency (empty struct = 0 bytes)
@@ -198,6 +218,9 @@ func (s *ControllerServer) CreateVolume(ctx context.Context, req *csi.CreateVolu
 			return nil, status.Error(codes.InvalidArgument, "required bytes cannot be negative")
 		}
 	}
+	if requiredBytes > 0 && requiredBytes < minVolumeSize {
+		requiredBytes = minVolumeSize
+	}
 
 	parameters := req.Parameters
 	if parameters == nil {
@@ -250,6 +273,24 @@ func (s *ControllerServer) CreateVolume(ctx context.Context, req *csi.CreateVolu
 			returnedCapacity = requiredBytes
 		}
 
+		// For iSCSI ZVOLs, ensure the full iSCSI chain (target/extent/targetextent) exists.
+		// A previous CreateVolume may have created the ZVOL but failed before completing
+		// the iSCSI setup (e.g., due to a WebSocket connection drop).
+		if existingDataset.Type == "VOLUME" && protocol == ProtocolISCSI {
+			volCtx, err := s.ensureISCSIChain(ctx, volumeID, datasetPath, parameters)
+			if err != nil {
+				return nil, status.Errorf(codes.Internal, "failed to ensure iSCSI resources for existing volume: %v", err)
+			}
+			s.driver.Log().V(LogLevelDebug).Info("Volume already exists, returning with iSCSI context", "volumeId", volumeID, "capacity", returnedCapacity)
+			return &csi.CreateVolumeResponse{
+				Volume: &csi.Volume{
+					VolumeId:      volumeID,
+					CapacityBytes: returnedCapacity,
+					VolumeContext: volCtx,
+				},
+			}, nil
+		}
+
 		s.driver.Log().V(LogLevelDebug).Info("Volume already exists, returning existing volume", "volumeId", volumeID, "capacity", returnedCapacity)
 		return &csi.CreateVolumeResponse{
 			Volume: &csi.Volume{
@@ -258,6 +299,13 @@ func (s *ControllerServer) CreateVolume(ctx context.Context, req *csi.CreateVolu
 				VolumeContext: parameters,
 			},
 		}, nil
+	}
+
+	// Check block volume compatibility with protocol
+	for _, cap := range req.VolumeCapabilities {
+		if cap.GetBlock() != nil && protocol != ProtocolISCSI {
+			return nil, status.Error(codes.InvalidArgument, "block volume mode is not supported for NFS protocol")
+		}
 	}
 
 	if req.VolumeContentSource != nil {
@@ -340,20 +388,29 @@ func (s *ControllerServer) createNFSVolume(ctx context.Context, volumeID, datase
 
 	stringPtr := func(s string) *string { return &s }
 
+	mapAllUser := defaultNFSMapAllUser
+	if val, ok := parameters[paramNFSMapAllUser]; ok && val != "" {
+		mapAllUser = val
+	}
+	mapAllGroup := defaultNFSMapAllGroup
+	if val, ok := parameters[paramNFSMapAllGroup]; ok && val != "" {
+		mapAllGroup = val
+	}
+
 	shareOpts := &client.NFSShareCreateOptions{
 		Path:        mountpoint,
 		Comment:     fmt.Sprintf("CSI volume %s", volumeID),
 		Enabled:     true,
 		ReadOnly:    false,
-		MapAllUser:  stringPtr("root"),
-		MapAllGroup: stringPtr("wheel"),
+		MapAllUser:  stringPtr(mapAllUser),
+		MapAllGroup: stringPtr(mapAllGroup),
 	}
 
-	if hosts, ok := parameters["nfs.hosts"]; ok {
+	if hosts, ok := parameters[paramNFSHosts]; ok {
 		shareOpts.Hosts = strings.Split(hosts, ",")
 	}
 
-	if networks, ok := parameters["nfs.networks"]; ok {
+	if networks, ok := parameters[paramNFSNetworks]; ok {
 		shareOpts.Networks = strings.Split(networks, ",")
 	}
 
@@ -418,6 +475,106 @@ func makeISCSIExtentName(volumeID string) string {
 		return volumeID[:maxISCSIExtentNameLength]
 	}
 	return volumeID
+}
+
+// ensureISCSIChain verifies that the iSCSI target, extent, and target-extent association
+// exist for an existing ZVOL. If any are missing (e.g., a previous CreateVolume was
+// interrupted by a connection drop after creating the ZVOL), they are created.
+// Returns the volume context map with targetPortal, targetIQN, and lun populated.
+func (s *ControllerServer) ensureISCSIChain(ctx context.Context, volumeID, datasetPath string, parameters map[string]string) (map[string]string, error) {
+	zvolPath := fmt.Sprintf("zvol/%s", datasetPath)
+	iqnBase := s.driver.GetISCSIIQNBaseFromParameters(parameters)
+	targetSuffix := makeISCSITargetSuffix(volumeID)
+	extentName := makeISCSIExtentName(volumeID)
+
+	blocksize := defaultISCSIBlocksize
+	if val, ok := parameters["iscsi.blocksize"]; ok {
+		if bs, err := strconv.Atoi(val); err == nil {
+			blocksize = bs
+		}
+	}
+
+	// Check if extent already exists for this ZVOL
+	extent, err := s.driver.Client().GetISCSIExtentByDisk(ctx, zvolPath)
+	if err != nil {
+		// Extent doesn't exist - create it along with target and association
+		s.driver.Log().Info("iSCSI extent missing for existing ZVOL, completing iSCSI setup", "volumeId", volumeID, "zvolPath", zvolPath)
+
+		target, err := s.driver.Client().CreateISCSITargetWithAuth(ctx, targetSuffix, fmt.Sprintf("CSI volume %s", volumeID), 0, 0)
+		if err != nil {
+			// Target may already exist from a partial creation
+			target, err = s.driver.Client().GetISCSITargetByName(ctx, targetSuffix)
+			if err != nil {
+				return nil, fmt.Errorf("failed to create or find iSCSI target: %w", err)
+			}
+		}
+
+		extent, err = s.driver.Client().CreateISCSIExtent(ctx, extentName, zvolPath, blocksize)
+		if err != nil {
+			return nil, fmt.Errorf("failed to create iSCSI extent: %w", err)
+		}
+
+		_, err = s.driver.Client().CreateISCSITargetExtent(ctx, target.ID, extent.ID, 0)
+		if err != nil {
+			return nil, fmt.Errorf("failed to associate target and extent: %w", err)
+		}
+
+		fullIQN := fmt.Sprintf("%s:%s", iqnBase, target.Name)
+		volCtx := copyParameters(parameters)
+		volCtx["targetPortal"] = s.driver.ISCSIPortal()
+		volCtx["targetIQN"] = fullIQN
+		volCtx["lun"] = "0"
+		return volCtx, nil
+	}
+
+	// Extent exists - look up the target via target-extent association
+	targetExtent, err := s.driver.Client().GetISCSITargetExtentByExtent(ctx, extent.ID)
+	if err != nil {
+		// Association missing - extent exists but wasn't linked to a target yet.
+		// Find or create the target, then create the association.
+		s.driver.Log().Info("iSCSI target-extent association missing, completing setup", "volumeId", volumeID, "extentId", extent.ID)
+
+		target, tErr := s.driver.Client().CreateISCSITargetWithAuth(ctx, targetSuffix, fmt.Sprintf("CSI volume %s", volumeID), 0, 0)
+		if tErr != nil {
+			target, tErr = s.driver.Client().GetISCSITargetByName(ctx, targetSuffix)
+			if tErr != nil {
+				return nil, fmt.Errorf("failed to create or find iSCSI target: %w", tErr)
+			}
+		}
+
+		_, aErr := s.driver.Client().CreateISCSITargetExtent(ctx, target.ID, extent.ID, 0)
+		if aErr != nil {
+			return nil, fmt.Errorf("failed to associate target and extent: %w", aErr)
+		}
+
+		fullIQN := fmt.Sprintf("%s:%s", iqnBase, target.Name)
+		volCtx := copyParameters(parameters)
+		volCtx["targetPortal"] = s.driver.ISCSIPortal()
+		volCtx["targetIQN"] = fullIQN
+		volCtx["lun"] = "0"
+		return volCtx, nil
+	}
+
+	target, err := s.driver.Client().GetISCSITargetByID(ctx, targetExtent.Target)
+	if err != nil {
+		return nil, fmt.Errorf("failed to find iSCSI target: %w", err)
+	}
+
+	fullIQN := fmt.Sprintf("%s:%s", iqnBase, target.Name)
+	volCtx := copyParameters(parameters)
+	volCtx["targetPortal"] = s.driver.ISCSIPortal()
+	volCtx["targetIQN"] = fullIQN
+	volCtx["lun"] = fmt.Sprintf("%d", targetExtent.LunID)
+	return volCtx, nil
+}
+
+// copyParameters returns a shallow copy of the map.
+func copyParameters(m map[string]string) map[string]string {
+	out := make(map[string]string, len(m))
+	for k, v := range m {
+		out[k] = v
+	}
+	return out
 }
 
 // createISCSIVolume creates a ZVOL with iSCSI target, extent, and optional CHAP authentication.
@@ -540,7 +697,7 @@ func (s *ControllerServer) createISCSIVolume(ctx context.Context, volumeID, data
 	}
 
 	zvolPath := fmt.Sprintf("zvol/%s", datasetPath)
-	blocksize := 512
+	blocksize := defaultISCSIBlocksize
 	if val, ok := parameters["iscsi.blocksize"]; ok {
 		if bs, err := strconv.Atoi(val); err == nil {
 			blocksize = bs
@@ -629,6 +786,25 @@ func (s *ControllerServer) createVolumeFromSource(ctx context.Context, req *csi.
 		if protocol == ProtocolISCSI && existingDataset.Volsize > 0 {
 			capacityBytes = existingDataset.Volsize
 		}
+
+		// For iSCSI ZVOLs, ensure the full iSCSI chain exists.
+		// A previous CreateVolume may have cloned the ZVOL but failed before
+		// completing the iSCSI target/extent setup.
+		if existingDataset.Type == "VOLUME" && protocol == ProtocolISCSI {
+			volCtx, err := s.ensureISCSIChain(ctx, volumeID, datasetPath, parameters)
+			if err != nil {
+				return nil, status.Errorf(codes.Internal, "failed to ensure iSCSI resources for existing clone: %v", err)
+			}
+			return &csi.CreateVolumeResponse{
+				Volume: &csi.Volume{
+					VolumeId:      volumeID,
+					CapacityBytes: capacityBytes,
+					VolumeContext: volCtx,
+					ContentSource: contentSource,
+				},
+			}, nil
+		}
+
 		return &csi.CreateVolumeResponse{
 			Volume: &csi.Volume{
 				VolumeId:      volumeID,
@@ -656,6 +832,9 @@ func (s *ControllerServer) createVolumeFromSource(ctx context.Context, req *csi.
 		}
 
 		requiredBytes := req.CapacityRange.RequiredBytes
+		if requiredBytes > 0 && requiredBytes < minVolumeSize {
+			requiredBytes = minVolumeSize
+		}
 		if requiredBytes > 0 {
 			updateOpts := &client.DatasetUpdateOptions{}
 			if protocol == ProtocolISCSI {
@@ -730,6 +909,9 @@ func (s *ControllerServer) createVolumeFromSource(ctx context.Context, req *csi.
 		s.driver.Client().DeleteSnapshot(ctx, snapshot.ID)
 
 		requiredBytes := req.CapacityRange.RequiredBytes
+		if requiredBytes > 0 && requiredBytes < minVolumeSize {
+			requiredBytes = minVolumeSize
+		}
 		if requiredBytes > 0 {
 			updateOpts := &client.DatasetUpdateOptions{}
 			if protocol == ProtocolISCSI {
@@ -789,11 +971,32 @@ func (s *ControllerServer) createNFSShareForClone(ctx context.Context, volumeID,
 		mountpoint = fmt.Sprintf("/mnt/%s", datasetPath)
 	}
 
+	stringPtr := func(s string) *string { return &s }
+
+	mapAllUser := defaultNFSMapAllUser
+	if val, ok := parameters[paramNFSMapAllUser]; ok && val != "" {
+		mapAllUser = val
+	}
+	mapAllGroup := defaultNFSMapAllGroup
+	if val, ok := parameters[paramNFSMapAllGroup]; ok && val != "" {
+		mapAllGroup = val
+	}
+
 	shareOpts := &client.NFSShareCreateOptions{
-		Path:     mountpoint,
-		Comment:  fmt.Sprintf("CSI volume clone %s", volumeID),
-		Enabled:  true,
-		ReadOnly: false,
+		Path:        mountpoint,
+		Comment:     fmt.Sprintf("CSI volume clone %s", volumeID),
+		Enabled:     true,
+		ReadOnly:    false,
+		MapAllUser:  stringPtr(mapAllUser),
+		MapAllGroup: stringPtr(mapAllGroup),
+	}
+
+	if hosts, ok := parameters[paramNFSHosts]; ok {
+		shareOpts.Hosts = strings.Split(hosts, ",")
+	}
+
+	if networks, ok := parameters[paramNFSNetworks]; ok {
+		shareOpts.Networks = strings.Split(networks, ",")
 	}
 
 	share, err := s.driver.Client().CreateNFSShare(ctx, shareOpts)
@@ -832,7 +1035,7 @@ func (s *ControllerServer) createISCSITargetForClone(ctx context.Context, volume
 	}
 
 	zvolPath := fmt.Sprintf("zvol/%s", datasetPath)
-	extent, err := s.driver.Client().CreateISCSIExtent(ctx, makeISCSIExtentName(volumeID), zvolPath, 512)
+	extent, err := s.driver.Client().CreateISCSIExtent(ctx, makeISCSIExtentName(volumeID), zvolPath, defaultISCSIBlocksize)
 	if err != nil {
 		s.driver.Client().DeleteISCSITarget(ctx, target.ID, &client.ISCSITargetDeleteOptions{Force: true})
 		return nil, err
@@ -986,12 +1189,6 @@ func (s *ControllerServer) ControllerPublishVolume(ctx context.Context, req *csi
 	}
 	if req.VolumeCapability == nil {
 		return nil, status.Error(codes.InvalidArgument, "volume capability is required")
-	}
-
-	// Validate node exists - in single-node deployments, check against our node ID
-	// In multi-node deployments, this should be expanded to track all registered nodes
-	if req.NodeId != s.driver.NodeID() {
-		return nil, status.Errorf(codes.NotFound, "node %s not found", req.NodeId)
 	}
 
 	// Parse volume ID to get dataset path
@@ -1282,6 +1479,7 @@ func (s *ControllerServer) CreateSnapshot(ctx context.Context, req *csi.CreateSn
 					SourceVolumeId: req.SourceVolumeId,
 					CreationTime:   timestamppb.Now(),
 					ReadyToUse:     true,
+					SizeBytes:      volInfo.CapacityBytes,
 				},
 			}, nil
 		}
@@ -1312,6 +1510,7 @@ func (s *ControllerServer) CreateSnapshot(ctx context.Context, req *csi.CreateSn
 			SourceVolumeId: req.SourceVolumeId,
 			CreationTime:   timestamppb.Now(),
 			ReadyToUse:     true,
+			SizeBytes:      volInfo.CapacityBytes,
 		},
 	}, nil
 }
@@ -1530,6 +1729,9 @@ func (s *ControllerServer) ControllerExpandVolume(ctx context.Context, req *csi.
 	}
 
 	newSize := req.CapacityRange.RequiredBytes
+	if newSize > 0 && newSize < minVolumeSize {
+		newSize = minVolumeSize
+	}
 	if newSize <= volInfo.CapacityBytes {
 		return &csi.ControllerExpandVolumeResponse{
 			CapacityBytes:         volInfo.CapacityBytes,

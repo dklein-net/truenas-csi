@@ -3,7 +3,7 @@
 # To re-generate a bundle for another specific version without changing the standard setup, you can:
 # - use the VERSION as arg of the bundle target (e.g make bundle VERSION=0.0.2)
 # - use environment variables to overwrite this value (e.g export VERSION=0.0.2)
-VERSION ?= 0.1.0
+VERSION ?= 1.0.0
 
 # Git version information for ldflags injection
 GIT_VERSION := $(shell git describe --dirty --tags --always 2>/dev/null || echo "unknown")
@@ -61,6 +61,9 @@ endif
 OPERATOR_SDK_VERSION ?= v1.42.0
 # Image URL to use all building/pushing image targets
 IMG ?= $(IMAGE_TAG_BASE):v$(VERSION)
+
+# DRIVER_IMG defines the CSI driver image reference used in the operator's env vars.
+DRIVER_IMG ?= quay.io/truenas_solutions/truenas-csi:v$(VERSION)
 
 # Get the currently used golang install path (in GOPATH/bin, unless GOBIN is set)
 ifeq (,$(shell go env GOBIN))
@@ -333,7 +336,9 @@ endif
 bundle: manifests kustomize operator-sdk ## Generate bundle manifests and metadata, then validate generated files.
 	$(OPERATOR_SDK) generate kustomize manifests -q
 	cd config/manager && $(KUSTOMIZE) edit set image controller=$(IMG)
+	sed -i 's|value: "quay.io/truenas_solutions/truenas-csi:.*"|value: "$(DRIVER_IMG)"|' config/manager/manager.yaml
 	$(KUSTOMIZE) build config/manifests | $(OPERATOR_SDK) generate bundle $(BUNDLE_GEN_FLAGS)
+	hack/resolve-image-digests.sh bundle/manifests/operator.clusterserviceversion.yaml
 	$(OPERATOR_SDK) bundle validate ./bundle
 
 .PHONY: bundle-build
