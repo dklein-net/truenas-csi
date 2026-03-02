@@ -78,6 +78,9 @@ COPY --from=packages /usr/sbin/resize2fs /usr/sbin/
 COPY --from=packages /usr/lib64/libext2fs.so* /usr/lib64/
 COPY --from=packages /usr/lib64/libcom_err.so* /usr/lib64/
 COPY --from=packages /usr/lib64/libe2p.so* /usr/lib64/
+COPY --from=packages /usr/lib64/libinih.so* /usr/lib64/
+COPY --from=packages /usr/lib64/liburcu.so* /usr/lib64/
+COPY --from=packages /usr/lib64/liburcu-common.so* /usr/lib64/
 
 # Copy license file (required for certification)
 COPY LICENSE /licenses/LICENSE

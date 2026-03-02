@@ -67,17 +67,17 @@ spec:
         name: manager
         env:
         - name: PROVISIONER_IMAGE
-          value: "registry.k8s.io/sig-storage/csi-provisioner:v5.1.0"
+          value: "registry.k8s.io/sig-storage/csi-provisioner:v6.1.1"
         - name: ATTACHER_IMAGE
-          value: "registry.k8s.io/sig-storage/csi-attacher:v4.7.0"
+          value: "registry.k8s.io/sig-storage/csi-attacher:v4.11.0"
         - name: SNAPSHOTTER_IMAGE
-          value: "registry.k8s.io/sig-storage/csi-snapshotter:v8.2.0"
+          value: "registry.k8s.io/sig-storage/csi-snapshotter:v8.5.0"
         - name: RESIZER_IMAGE
-          value: "registry.k8s.io/sig-storage/csi-resizer:v1.12.0"
+          value: "registry.k8s.io/sig-storage/csi-resizer:v2.1.0"
         - name: NODE_DRIVER_REGISTRAR_IMAGE
-          value: "registry.k8s.io/sig-storage/csi-node-driver-registrar:v2.12.0"
+          value: "registry.k8s.io/sig-storage/csi-node-driver-registrar:v2.16.0"
         - name: LIVENESS_PROBE_IMAGE
-          value: "registry.k8s.io/sig-storage/livenessprobe:v2.14.0"
+          value: "registry.k8s.io/sig-storage/livenessprobe:v2.18.0"
         - name: DRIVER_IMAGE
           value: "quay.io/truenas_solutions/truenas-csi:v1.0.0"
         ports: []

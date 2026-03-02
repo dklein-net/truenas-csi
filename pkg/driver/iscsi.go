@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -30,6 +31,12 @@ const (
 	// iSCSI connection settings
 	iscsiRetryCount    = 10 // number of login attempts
 	iscsiCheckInterval = 1  // seconds between retries
+
+	// Filesystem types
+	fsTypeXFS = "xfs"
+
+	// Mount options
+	mountOptionNouuid = "nouuid"
 )
 
 // ISCSIHandler implements the ProtocolHandler interface for iSCSI volumes
@@ -193,9 +200,16 @@ func (h *ISCSIHandler) Stage(ctx context.Context, req *StageRequest) (*StageResu
 		return nil, fmt.Errorf("failed to create staging directory: %w", err)
 	}
 
+	// For XFS, add nouuid mount option to allow mounting cloned volumes
+	// that share the same UUID as the source volume on the same node.
+	mountFlags := req.MountFlags
+	if fsType == fsTypeXFS && !slices.Contains(mountFlags, mountOptionNouuid) {
+		mountFlags = append(mountFlags, mountOptionNouuid)
+	}
+
 	// Format and mount device using SafeFormatAndMount
 	h.log.V(LogLevelDebug).Info("FormatAndMount device", "device", devicePath, "stagingPath", req.StagingPath, "fsType", fsType)
-	if err := h.mounter.FormatAndMount(devicePath, req.StagingPath, fsType, req.MountFlags); err != nil {
+	if err := h.mounter.FormatAndMount(devicePath, req.StagingPath, fsType, mountFlags); err != nil {
 		return nil, fmt.Errorf("failed to format and mount device: %w", err)
 	}
 

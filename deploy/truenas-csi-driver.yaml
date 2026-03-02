@@ -257,7 +257,7 @@ spec:
 
         # CSI Provisioner
         - name: csi-provisioner
-          image: registry.k8s.io/sig-storage/csi-provisioner:v5.0.1
+          image: registry.k8s.io/sig-storage/csi-provisioner:v6.1.1
           args:
             - "--csi-address=$(ADDRESS)"
             - "--v=5"
@@ -275,7 +275,7 @@ spec:
 
         # CSI Attacher
         - name: csi-attacher
-          image: registry.k8s.io/sig-storage/csi-attacher:v4.7.0
+          image: registry.k8s.io/sig-storage/csi-attacher:v4.11.0
           args:
             - "--csi-address=$(ADDRESS)"
             - "--v=5"
@@ -290,7 +290,7 @@ spec:
 
         # CSI Snapshotter
         - name: csi-snapshotter
-          image: registry.k8s.io/sig-storage/csi-snapshotter:v8.1.0
+          image: registry.k8s.io/sig-storage/csi-snapshotter:v8.5.0
           args:
             - "--csi-address=$(ADDRESS)"
             - "--v=5"
@@ -305,7 +305,7 @@ spec:
 
         # CSI Resizer
         - name: csi-resizer
-          image: registry.k8s.io/sig-storage/csi-resizer:v1.12.0
+          image: registry.k8s.io/sig-storage/csi-resizer:v2.1.0
           args:
             - "--csi-address=$(ADDRESS)"
             - "--v=5"
@@ -320,7 +320,7 @@ spec:
               
         # Liveness Probe
         - name: liveness-probe
-          image: registry.k8s.io/sig-storage/livenessprobe:v2.14.0
+          image: registry.k8s.io/sig-storage/livenessprobe:v2.18.0
           args:
             - "--csi-address=/csi/csi.sock"
             - "--health-port=9808"
@@ -450,7 +450,7 @@ spec:
 
         # Node Driver Registrar
         - name: csi-node-driver-registrar
-          image: registry.k8s.io/sig-storage/csi-node-driver-registrar:v2.12.0
+          image: registry.k8s.io/sig-storage/csi-node-driver-registrar:v2.16.0
           args:
             - "--csi-address=$(ADDRESS)"
             - "--kubelet-registration-path=$(DRIVER_REG_SOCK_PATH)"
@@ -468,7 +468,7 @@ spec:
               
         # Liveness Probe
         - name: liveness-probe
-          image: registry.k8s.io/sig-storage/livenessprobe:v2.14.0
+          image: registry.k8s.io/sig-storage/livenessprobe:v2.18.0
           args:
             - "--csi-address=/csi/csi.sock"
             - "--health-port=9808"

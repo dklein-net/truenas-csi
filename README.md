@@ -86,6 +86,52 @@ kubectl get pods -n truenas-csi
 kubectl get csidrivers
 ```
 
+### Non-Standard Kubelet Paths
+
+The default deployment manifest uses `/var/lib/kubelet` as the kubelet root directory. Some Kubernetes distributions use a different path. If your distribution uses a non-standard path, you must update the following in `deploy/truenas-csi-driver.yaml` before deploying:
+
+1. All `hostPath` values containing `/var/lib/kubelet`
+2. The `DRIVER_REG_SOCK_PATH` environment variable
+3. The `--kubelet-registration-path` argument
+4. The `mountPath` for the `kubelet-dir` volume mount on the `csi-node` container
+
+| Distribution | Kubelet Path |
+|---|---|
+| Standard Kubernetes | `/var/lib/kubelet` (default) |
+| MicroK8s | `/var/snap/microk8s/common/var/lib/kubelet` |
+| K3s | `/var/lib/rancher/k3s/agent/kubelet` |
+
+> **Important:** The `kubelet-dir` `mountPath` must match the `hostPath`. If they differ, NFS mounts will succeed inside the CSI container but will not propagate to kubelet, causing pods to see local storage instead of NFS.
+
+#### MicroK8s Mount Propagation
+
+MicroK8s runs inside a snap with its own mount namespace. For CSI mount propagation to work, the host root filesystem must have `shared` propagation **before** MicroK8s starts:
+
+```bash
+sudo mount --make-rshared /
+microk8s start
+```
+
+To make this persistent across reboots, create a systemd unit:
+
+```bash
+sudo tee /etc/systemd/system/microk8s-mount-propagation.service <<EOF
+[Unit]
+Description=Ensure shared mount propagation for MicroK8s
+Before=snap.microk8s.daemon-containerd.service
+
+[Service]
+Type=oneshot
+ExecStart=/bin/mount --make-rshared /
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+sudo systemctl enable microk8s-mount-propagation
+```
+
 ## Configuration
 
 ### Driver Configuration (ConfigMap)
