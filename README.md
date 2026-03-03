@@ -247,11 +247,10 @@ make test
 
 ## Container Images
 
-Images are published to [quay.io/truenas_solutions](https://quay.io/organization/truenas_solutions):
-
 | Image | Description |
 |-------|-------------|
-| `quay.io/truenas_solutions/truenas-csi` | CSI driver (UBI-based for OpenShift) |
+| `ghcr.io/truenas/truenas-csi` | CSI driver (Alpine-based, for standard Kubernetes) |
+| `quay.io/truenas_solutions/truenas-csi` | CSI driver (UBI-based, for Red Hat OpenShift) |
 | `quay.io/truenas_solutions/truenas-csi-operator` | Kubernetes operator |
 | `quay.io/truenas_solutions/truenas-csi-operator-bundle` | OLM bundle for OperatorHub |
 

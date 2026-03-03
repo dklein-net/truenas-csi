@@ -185,7 +185,7 @@ spec:
       containers:
         # CSI Controller
         - name: csi-controller
-          image: truenas/truenas-csi-driver:latest
+          image: ghcr.io/truenas/truenas-csi:latest
           imagePullPolicy: IfNotPresent
           args:
             - "--endpoint=$(CSI_ENDPOINT)"
@@ -358,7 +358,7 @@ spec:
       containers:
         # CSI Node Driver
         - name: csi-node
-          image: truenas/truenas-csi-driver:latest
+          image: ghcr.io/truenas/truenas-csi:latest
           imagePullPolicy: IfNotPresent
           lifecycle:
             postStart:

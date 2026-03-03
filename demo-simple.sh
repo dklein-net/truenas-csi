@@ -164,11 +164,11 @@ build_and_load_image() {
     print_header "Building and Loading CSI Driver Image"
 
     print_info "Building Docker image..."
-    docker build -t truenas/truenas-csi-driver:demo .
+    docker build -t ghcr.io/truenas/truenas-csi:latest .
     print_success "Image built successfully"
 
     print_info "Loading image into Kind cluster..."
-    kind load docker-image truenas/truenas-csi-driver:demo --name ${CLUSTER_NAME}
+    kind load docker-image ghcr.io/truenas/truenas-csi:latest --name ${CLUSTER_NAME}
     print_success "Image loaded into cluster"
 }
 
@@ -179,10 +179,7 @@ deploy_driver() {
     # Deploy using the pre-configured YAML
     print_info "Deploying driver from deploy/truenas-csi-driver.yaml..."
 
-    # Update deployment manifest to use demo image and IfNotPresent pull policy
-    sed -e "s|truenas/truenas-csi-driver:latest|truenas/truenas-csi-driver:demo|g" \
-        -e "s|imagePullPolicy: Always|imagePullPolicy: IfNotPresent|g" \
-        deploy/truenas-csi-driver.yaml | kubectl apply -f -
+    kubectl apply -f deploy/truenas-csi-driver.yaml
 
     print_success "Deployment manifest applied"
     echo ""
