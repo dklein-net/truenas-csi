@@ -36,7 +36,8 @@ func TestConnect_InvalidURL(t *testing.T) {
 
 	err := client.Connect(ctx)
 	assertError(t, err)
-	assertTrue(t, IsConnectionError(err))
+	// Connect retries on connection errors (to survive TrueNAS reboots),
+	// so an unreachable host will time out waiting for reconnection.
 }
 
 func TestConnect_AuthenticationFailed(t *testing.T) {

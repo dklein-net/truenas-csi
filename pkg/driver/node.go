@@ -161,7 +161,7 @@ func (s *NodeServer) NodeStageVolume(ctx context.Context, req *csi.NodeStageVolu
 	isBlockVolume := req.VolumeCapability.GetBlock() != nil
 
 	// Extract filesystem type for mount volumes
-	fsType := "ext4"
+	fsType := DefaultFSType
 	var mountFlags []string
 	if req.VolumeCapability.GetMount() != nil {
 		if req.VolumeCapability.GetMount().FsType != "" {

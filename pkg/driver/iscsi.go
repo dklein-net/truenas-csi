@@ -37,6 +37,7 @@ const (
 
 	// Mount options
 	mountOptionNouuid = "nouuid"
+	mountOptionBind   = "bind"
 )
 
 // ISCSIHandler implements the ProtocolHandler interface for iSCSI volumes
@@ -86,12 +87,12 @@ func connectorPath(volumeID string) string {
 // parseISCSIConfig extracts iSCSI configuration from publish and volume contexts
 func parseISCSIConfig(publishContext, volumeContext map[string]string) (*ISCSIConfig, error) {
 	config := &ISCSIConfig{
-		TargetPortal: publishContext["targetPortal"],
-		TargetIQN:    publishContext["targetIQN"],
+		TargetPortal: publishContext[PublishContextTargetPortal],
+		TargetIQN:    publishContext[PublishContextTargetIQN],
 	}
 
 	// Parse LUN
-	if lunStr := publishContext["lun"]; lunStr != "" {
+	if lunStr := publishContext[PublishContextLUN]; lunStr != "" {
 		lun, err := strconv.ParseInt(lunStr, 10, 32)
 		if err != nil {
 			return nil, fmt.Errorf("invalid LUN value: %v", err)
@@ -130,7 +131,7 @@ func (h *ISCSIHandler) buildConnector(volumeID string, config *ISCSIConfig) *isc
 
 	// Configure CHAP authentication
 	if config.CHAPUsername != "" && config.CHAPPassword != "" {
-		connector.AuthType = "chap"
+		connector.AuthType = iscsiAuthTypeCHAP
 		connector.DiscoverySecrets = iscsilib.Secrets{
 			UserName:   config.CHAPUsername,
 			Password:   config.CHAPPassword,
@@ -192,7 +193,7 @@ func (h *ISCSIHandler) Stage(ctx context.Context, req *StageRequest) (*StageResu
 	// Get filesystem type for mount volumes
 	fsType := req.FSType
 	if fsType == "" {
-		fsType = "ext4"
+		fsType = DefaultFSType
 	}
 
 	// Create staging directory
@@ -328,9 +329,9 @@ func (h *ISCSIHandler) Publish(ctx context.Context, req *PublishRequest) error {
 	}
 
 	// Bind mount from staging to target
-	mountOptions := []string{"bind"}
+	mountOptions := []string{mountOptionBind}
 	if req.ReadOnly {
-		mountOptions = append(mountOptions, "ro")
+		mountOptions = append(mountOptions, mountOptionReadOnly)
 	}
 
 	if err := h.mounter.Mount(req.StagingPath, req.TargetPath, "", mountOptions); err != nil {
@@ -385,9 +386,9 @@ func (h *ISCSIHandler) publishBlockVolume(ctx context.Context, req *PublishReque
 	file.Close()
 
 	// Bind mount block device to target file
-	mountOptions := []string{"bind"}
+	mountOptions := []string{mountOptionBind}
 	if req.ReadOnly {
-		mountOptions = append(mountOptions, "ro")
+		mountOptions = append(mountOptions, mountOptionReadOnly)
 	}
 
 	if err := h.mounter.Mount(devicePath, req.TargetPath, "", mountOptions); err != nil {

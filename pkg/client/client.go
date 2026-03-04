@@ -229,12 +229,33 @@ func New(cfg Config) *Client {
 }
 
 // Connect establishes the initial connection to TrueNAS.
+// If the initial dial fails, it starts the reconnection loop and waits for
+// a successful connection. This prevents CrashLoopBackOff when TrueNAS is
+// temporarily unavailable (e.g., during a reboot).
+// The context controls how long to wait; use context.Background() for unlimited retry.
 // It is safe to call multiple times; subsequent calls return nil if already connected.
 func (c *Client) Connect(ctx context.Context) error {
 	if c.Connected() {
 		return nil
 	}
-	return c.dial(ctx)
+
+	err := c.dial(ctx)
+	if err == nil {
+		return nil
+	}
+
+	// Only retry on transient connection errors (e.g., TrueNAS unreachable during reboot).
+	// Authentication failures and other errors are returned immediately.
+	if !IsConnectionError(err) {
+		return err
+	}
+
+	// Connection error — start reconnection loop and wait
+	c.log.V(logLevelInfo).Info("Initial connection failed, starting reconnection", "error", err)
+	if c.reconnecting.CompareAndSwap(false, true) {
+		go c.reconnectLoop()
+	}
+	return c.waitForConnection(ctx)
 }
 
 // dial establishes a WebSocket connection to TrueNAS and authenticates.
@@ -491,6 +512,11 @@ func (c *Client) Connected() bool {
 	c.connMu.RLock()
 	defer c.connMu.RUnlock()
 	return c.conn != nil
+}
+
+// Closed reports whether the client has been permanently closed.
+func (c *Client) Closed() bool {
+	return c.closed.Load()
 }
 
 // Call invokes a JSON-RPC method with automatic retry on connection loss.

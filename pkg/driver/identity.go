@@ -6,6 +6,7 @@ import (
 	"github.com/container-storage-interface/spec/lib/go/csi"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
+	"google.golang.org/protobuf/types/known/wrapperspb"
 )
 
 // IdentityServer implements the CSI Identity service.
@@ -48,14 +49,18 @@ func (s *IdentityServer) GetPluginCapabilities(ctx context.Context, req *csi.Get
 	}, nil
 }
 
-// Probe checks if the driver is healthy by testing the TrueNAS connection.
+// Probe checks if the driver is healthy.
+// Returns success whenever the driver process is alive (prevents liveness probe kills
+// during temporary TrueNAS disconnections). The Ready field indicates whether the
+// backend is actually reachable — false means the client is reconnecting.
 func (s *IdentityServer) Probe(ctx context.Context, req *csi.ProbeRequest) (*csi.ProbeResponse, error) {
 	s.driver.Log().V(LogLevelDebug).Info("Probe called")
 
-	if err := s.driver.client.Ping(ctx); err != nil {
-		s.driver.Log().Error(err, "Health check failed")
-		return nil, status.Error(codes.FailedPrecondition, "TrueNAS connection failed")
+	if s.driver.client.Closed() {
+		return nil, status.Error(codes.FailedPrecondition, "TrueNAS client closed")
 	}
 
-	return &csi.ProbeResponse{}, nil
+	return &csi.ProbeResponse{
+		Ready: &wrapperspb.BoolValue{Value: s.driver.client.Connected()},
+	}, nil
 }

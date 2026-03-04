@@ -52,6 +52,56 @@ const (
 	// mapping so all client operations appear as root:wheel on the server.
 	defaultNFSMapAllUser  = "root"
 	defaultNFSMapAllGroup = "wheel"
+
+	// Default values
+	defaultVolBlockSize = "16K"
+	defaultSyncMode     = "STANDARD"
+
+	// ZFS dataset types
+	datasetTypeFilesystem = "FILESYSTEM"
+	datasetTypeVolume     = "VOLUME"
+)
+
+// StorageClass parameter keys
+const (
+	paramProtocol     = "protocol"
+	paramPool         = "pool"
+	paramCompression  = "compression"
+	paramSync         = "sync"
+	paramVolBlockSize = "volblocksize"
+
+	// iSCSI parameters
+	paramISCSIBlockSize  = "iscsi.blocksize"
+	paramISCSIIQNBase    = "iscsi.iqn-base"
+	paramISCSIIQNPrefix  = "iscsi.iqn-prefix"
+	paramISCSIChapUser   = "iscsi.chapUser"
+	paramISCSIChapSecret = "iscsi.chapSecret"
+	paramISCSIChapPeerUser   = "iscsi.chapPeerUser"
+	paramISCSIChapPeerSecret = "iscsi.chapPeerSecret"
+	paramISCSIInitiators     = "iscsi.initiators"
+
+	// iSCSI auth types
+	iscsiAuthTypeCHAP    = "chap"
+	iscsiAuthTypeMutual  = "CHAP_MUTUAL"
+
+	// Delete options
+	paramForceDelete             = "forceDelete"
+	paramDeleteExtentsWithTarget = "deleteExtentsWithTarget"
+
+	// Encryption parameters
+	paramEncryption             = "encryption"
+	paramEncryptionAlgorithm    = "encryption.algorithm"
+	paramEncryptionPassphrase   = "encryption.passphrase"
+	paramEncryptionKey          = "encryption.key"
+	paramEncryptionGenerateKey  = "encryption.generateKey"
+	paramEncryptionPBKDF2Iters  = "encryption.pbkdf2iters"
+
+	// Snapshot parameters
+	paramSnapshotSchedule      = "snapshot.schedule"
+	paramSnapshotNaming        = "snapshot.naming"
+	paramSnapshotRetention     = "snapshot.retention"
+	paramSnapshotRetentionUnit = "snapshot.retentionUnit"
+	paramSnapshotRecursive     = "snapshot.recursive"
 )
 
 const (
@@ -134,14 +184,14 @@ func (s *ControllerServer) validateVolumeCapabilities(caps []*csi.VolumeCapabili
 // validateStorageClassParameters validates StorageClass parameters
 func (s *ControllerServer) validateStorageClassParameters(ctx context.Context, parameters map[string]string) error {
 	// Validate compression algorithm
-	if val, ok := parameters["compression"]; ok {
+	if val, ok := parameters[paramCompression]; ok {
 		if _, valid := ValidCompressionAlgorithms[strings.ToUpper(val)]; !valid {
 			return fmt.Errorf("invalid compression algorithm: %s (valid: OFF, LZ4, GZIP, ZSTD, ZLE, LZJB)", val)
 		}
 	}
 
 	// Validate protocol
-	if val, ok := parameters["protocol"]; ok {
+	if val, ok := parameters[paramProtocol]; ok {
 		val = strings.ToLower(val)
 		if val != ProtocolNFS && val != ProtocolISCSI {
 			return fmt.Errorf("invalid protocol: %s (valid: nfs, iscsi)", val)
@@ -149,21 +199,21 @@ func (s *ControllerServer) validateStorageClassParameters(ctx context.Context, p
 	}
 
 	// Validate pool exists
-	if pool, ok := parameters["pool"]; ok {
+	if pool, ok := parameters[paramPool]; ok {
 		if _, err := s.driver.Client().GetPool(ctx, pool); err != nil {
 			return fmt.Errorf("pool %s does not exist or is not accessible", pool)
 		}
 	}
 
 	// Validate volblocksize (iSCSI)
-	if val, ok := parameters["volblocksize"]; ok {
+	if val, ok := parameters[paramVolBlockSize]; ok {
 		if _, valid := ValidVolBlockSizes[strings.ToUpper(val)]; !valid {
 			return fmt.Errorf("invalid volblocksize: %s (valid: 512, 1K, 2K, 4K, 8K, 16K, 32K, 64K, 128K)", val)
 		}
 	}
 
 	// Validate iSCSI blocksize
-	if val, ok := parameters["iscsi.blocksize"]; ok {
+	if val, ok := parameters[paramISCSIBlockSize]; ok {
 		bs, err := strconv.Atoi(val)
 		if err != nil {
 			return fmt.Errorf("invalid iscsi.blocksize: %s (valid: 512, 1024, 2048, 4096)", val)
@@ -174,7 +224,7 @@ func (s *ControllerServer) validateStorageClassParameters(ctx context.Context, p
 	}
 
 	// Validate snapshot schedule format
-	if schedule, ok := parameters["snapshot.schedule"]; ok && schedule != "" {
+	if schedule, ok := parameters[paramSnapshotSchedule]; ok && schedule != "" {
 		parts := strings.Fields(schedule)
 		if len(parts) != cronFieldCount {
 			return fmt.Errorf("invalid snapshot.schedule: expected %d fields (minute hour dom month dow), got %d", cronFieldCount, len(parts))
@@ -182,7 +232,7 @@ func (s *ControllerServer) validateStorageClassParameters(ctx context.Context, p
 	}
 
 	// Validate snapshot retention
-	if val, ok := parameters["snapshot.retention"]; ok && val != "" {
+	if val, ok := parameters[paramSnapshotRetention]; ok && val != "" {
 		days, err := strconv.Atoi(val)
 		if err != nil || days < 1 || days > 365 {
 			return fmt.Errorf("invalid snapshot.retention: %s (valid: 1-365 days)", val)
@@ -243,7 +293,7 @@ func (s *ControllerServer) CreateVolume(ctx context.Context, req *csi.CreateVolu
 	if err == nil && existingDataset != nil {
 		// Volume already exists - check if compatible (idempotency)
 		var existingCapacity int64
-		if existingDataset.Type == "VOLUME" {
+		if existingDataset.Type == datasetTypeVolume {
 			// iSCSI ZVOL - use Volsize
 			existingCapacity = existingDataset.Volsize
 		} else {
@@ -276,7 +326,7 @@ func (s *ControllerServer) CreateVolume(ctx context.Context, req *csi.CreateVolu
 		// For iSCSI ZVOLs, ensure the full iSCSI chain (target/extent/targetextent) exists.
 		// A previous CreateVolume may have created the ZVOL but failed before completing
 		// the iSCSI setup (e.g., due to a WebSocket connection drop).
-		if existingDataset.Type == "VOLUME" && protocol == ProtocolISCSI {
+		if existingDataset.Type == datasetTypeVolume && protocol == ProtocolISCSI {
 			volCtx, err := s.ensureISCSIChain(ctx, volumeID, datasetPath, parameters)
 			if err != nil {
 				return nil, status.Errorf(codes.Internal, "failed to ensure iSCSI resources for existing volume: %v", err)
@@ -343,18 +393,18 @@ func (s *ControllerServer) CreateVolume(ctx context.Context, req *csi.CreateVolu
 // createNFSVolume creates a ZFS filesystem dataset and NFS share for the volume.
 func (s *ControllerServer) createNFSVolume(ctx context.Context, volumeID, datasetPath string, capacityBytes int64, parameters map[string]string) (*VolumeInfo, error) {
 	compression := CompressionLZ4
-	if val, ok := parameters["compression"]; ok {
+	if val, ok := parameters[paramCompression]; ok {
 		compression = strings.ToUpper(val)
 	}
 
-	sync := "STANDARD"
-	if val, ok := parameters["sync"]; ok {
+	sync := defaultSyncMode
+	if val, ok := parameters[paramSync]; ok {
 		sync = strings.ToUpper(val)
 	}
 
 	datasetOpts := &client.DatasetCreateOptions{
 		Name:        datasetPath,
-		Type:        "FILESYSTEM",
+		Type:        datasetTypeFilesystem,
 		RefQuota:    capacityBytes,
 		Compression: compression,
 		Sync:        sync,
@@ -436,7 +486,7 @@ func (s *ControllerServer) createNFSVolume(ctx context.Context, volumeID, datase
 		CapacityBytes: capacityBytes,
 		DatasetPath:   datasetPath,
 		PoolName:      pool,
-		Protocol:      "nfs",
+		Protocol:      ProtocolNFS,
 		NFSPath:       mountpoint,
 		NFSShareID:    share.ID,
 		VolumeContext: parameters,
@@ -450,9 +500,9 @@ func (s *ControllerServer) createNFSVolume(ctx context.Context, volumeID, datase
 	}
 
 	if s.driver.NFSServer() != "" {
-		volInfo.VolumeContext["nfsServer"] = s.driver.NFSServer()
+		volInfo.VolumeContext[PublishContextNFSServer] = s.driver.NFSServer()
 	}
-	volInfo.VolumeContext["nfsPath"] = mountpoint
+	volInfo.VolumeContext[PublishContextNFSPath] = mountpoint
 
 	return volInfo, nil
 }
@@ -488,7 +538,7 @@ func (s *ControllerServer) ensureISCSIChain(ctx context.Context, volumeID, datas
 	extentName := makeISCSIExtentName(volumeID)
 
 	blocksize := defaultISCSIBlocksize
-	if val, ok := parameters["iscsi.blocksize"]; ok {
+	if val, ok := parameters[paramISCSIBlockSize]; ok {
 		if bs, err := strconv.Atoi(val); err == nil {
 			blocksize = bs
 		}
@@ -521,9 +571,9 @@ func (s *ControllerServer) ensureISCSIChain(ctx context.Context, volumeID, datas
 
 		fullIQN := fmt.Sprintf("%s:%s", iqnBase, target.Name)
 		volCtx := copyParameters(parameters)
-		volCtx["targetPortal"] = s.driver.ISCSIPortal()
-		volCtx["targetIQN"] = fullIQN
-		volCtx["lun"] = "0"
+		volCtx[PublishContextTargetPortal] = s.driver.ISCSIPortal()
+		volCtx[PublishContextTargetIQN] = fullIQN
+		volCtx[PublishContextLUN] = "0"
 		return volCtx, nil
 	}
 
@@ -549,9 +599,9 @@ func (s *ControllerServer) ensureISCSIChain(ctx context.Context, volumeID, datas
 
 		fullIQN := fmt.Sprintf("%s:%s", iqnBase, target.Name)
 		volCtx := copyParameters(parameters)
-		volCtx["targetPortal"] = s.driver.ISCSIPortal()
-		volCtx["targetIQN"] = fullIQN
-		volCtx["lun"] = "0"
+		volCtx[PublishContextTargetPortal] = s.driver.ISCSIPortal()
+		volCtx[PublishContextTargetIQN] = fullIQN
+		volCtx[PublishContextLUN] = "0"
 		return volCtx, nil
 	}
 
@@ -562,9 +612,9 @@ func (s *ControllerServer) ensureISCSIChain(ctx context.Context, volumeID, datas
 
 	fullIQN := fmt.Sprintf("%s:%s", iqnBase, target.Name)
 	volCtx := copyParameters(parameters)
-	volCtx["targetPortal"] = s.driver.ISCSIPortal()
-	volCtx["targetIQN"] = fullIQN
-	volCtx["lun"] = fmt.Sprintf("%d", targetExtent.LunID)
+	volCtx[PublishContextTargetPortal] = s.driver.ISCSIPortal()
+	volCtx[PublishContextTargetIQN] = fullIQN
+	volCtx[PublishContextLUN] = fmt.Sprintf("%d", targetExtent.LunID)
 	return volCtx, nil
 }
 
@@ -579,19 +629,19 @@ func copyParameters(m map[string]string) map[string]string {
 
 // createISCSIVolume creates a ZVOL with iSCSI target, extent, and optional CHAP authentication.
 func (s *ControllerServer) createISCSIVolume(ctx context.Context, volumeID, datasetPath string, capacityBytes int64, parameters map[string]string) (*VolumeInfo, error) {
-	compression := "LZ4"
-	if val, ok := parameters["compression"]; ok {
+	compression := CompressionLZ4
+	if val, ok := parameters[paramCompression]; ok {
 		compression = strings.ToUpper(val)
 	}
 
-	volblocksize := "16K"
-	if val, ok := parameters["volblocksize"]; ok {
+	volblocksize := defaultVolBlockSize
+	if val, ok := parameters[paramVolBlockSize]; ok {
 		volblocksize = val
 	}
 
 	datasetOpts := &client.DatasetCreateOptions{
 		Name:         datasetPath,
-		Type:         "VOLUME",
+		Type:         datasetTypeVolume,
 		Volsize:      capacityBytes,
 		Volblocksize: volblocksize,
 		Compression:  compression,
@@ -621,8 +671,8 @@ func (s *ControllerServer) createISCSIVolume(ctx context.Context, volumeID, data
 	// Create CHAP auth group if credentials are provided
 	var authID int
 	var authTag int
-	if chapUser, ok := parameters["iscsi.chapUser"]; ok && chapUser != "" {
-		chapSecret := parameters["iscsi.chapSecret"]
+	if chapUser, ok := parameters[paramISCSIChapUser]; ok && chapUser != "" {
+		chapSecret := parameters[paramISCSIChapSecret]
 		if chapSecret == "" {
 			s.driver.Client().DeleteDataset(ctx, datasetPath, &client.DatasetDeleteOptions{Recursive: true, Force: true})
 			return nil, fmt.Errorf("iscsi.chapSecret is required when iscsi.chapUser is specified")
@@ -642,10 +692,10 @@ func (s *ControllerServer) createISCSIVolume(ctx context.Context, volumeID, data
 		}
 
 		// Add mutual CHAP if provided
-		if peerUser, ok := parameters["iscsi.chapPeerUser"]; ok && peerUser != "" {
+		if peerUser, ok := parameters[paramISCSIChapPeerUser]; ok && peerUser != "" {
 			authOpts.PeerUser = peerUser
-			authOpts.PeerSecret = parameters["iscsi.chapPeerSecret"]
-			authOpts.DiscoveryAuth = "CHAP_MUTUAL"
+			authOpts.PeerSecret = parameters[paramISCSIChapPeerSecret]
+			authOpts.DiscoveryAuth = iscsiAuthTypeMutual
 		}
 
 		auth, err := s.driver.Client().CreateISCSIAuth(ctx, authOpts)
@@ -660,7 +710,7 @@ func (s *ControllerServer) createISCSIVolume(ctx context.Context, volumeID, data
 
 	// Create initiator group if specified
 	var initiatorID int
-	initiators := parameters["iscsi.initiators"]
+	initiators := parameters[paramISCSIInitiators]
 	if initiators != "" {
 		initOpts := &client.ISCSIInitiatorCreateOptions{
 			Initiators: strings.Split(initiators, ","),
@@ -698,7 +748,7 @@ func (s *ControllerServer) createISCSIVolume(ctx context.Context, volumeID, data
 
 	zvolPath := fmt.Sprintf("zvol/%s", datasetPath)
 	blocksize := defaultISCSIBlocksize
-	if val, ok := parameters["iscsi.blocksize"]; ok {
+	if val, ok := parameters[paramISCSIBlockSize]; ok {
 		if bs, err := strconv.Atoi(val); err == nil {
 			blocksize = bs
 		}
@@ -748,7 +798,7 @@ func (s *ControllerServer) createISCSIVolume(ctx context.Context, volumeID, data
 		CapacityBytes:    capacityBytes,
 		DatasetPath:      datasetPath,
 		PoolName:         pool,
-		Protocol:         "iscsi",
+		Protocol:         ProtocolISCSI,
 		TargetIQN:        fullIQN,
 		TargetPortal:     s.driver.ISCSIPortal(),
 		LUN:              0,
@@ -766,9 +816,9 @@ func (s *ControllerServer) createISCSIVolume(ctx context.Context, volumeID, data
 		},
 	}
 
-	volInfo.VolumeContext["targetPortal"] = s.driver.ISCSIPortal()
-	volInfo.VolumeContext["targetIQN"] = fullIQN
-	volInfo.VolumeContext["lun"] = "0"
+	volInfo.VolumeContext[PublishContextTargetPortal] = s.driver.ISCSIPortal()
+	volInfo.VolumeContext[PublishContextTargetIQN] = fullIQN
+	volInfo.VolumeContext[PublishContextLUN] = "0"
 
 	return volInfo, nil
 }
@@ -790,7 +840,7 @@ func (s *ControllerServer) createVolumeFromSource(ctx context.Context, req *csi.
 		// For iSCSI ZVOLs, ensure the full iSCSI chain exists.
 		// A previous CreateVolume may have cloned the ZVOL but failed before
 		// completing the iSCSI target/extent setup.
-		if existingDataset.Type == "VOLUME" && protocol == ProtocolISCSI {
+		if existingDataset.Type == datasetTypeVolume && protocol == ProtocolISCSI {
 			volCtx, err := s.ensureISCSIChain(ctx, volumeID, datasetPath, parameters)
 			if err != nil {
 				return nil, status.Errorf(codes.Internal, "failed to ensure iSCSI resources for existing clone: %v", err)
@@ -1010,16 +1060,16 @@ func (s *ControllerServer) createNFSShareForClone(ctx context.Context, volumeID,
 		CapacityBytes: dataset.RefQuota,
 		DatasetPath:   datasetPath,
 		PoolName:      client.ExtractPoolFromPath(datasetPath),
-		Protocol:      "nfs",
+		Protocol:      ProtocolNFS,
 		NFSPath:       mountpoint,
 		NFSShareID:    share.ID,
 		VolumeContext: parameters,
 	}
 
 	if s.driver.NFSServer() != "" {
-		volInfo.VolumeContext["nfsServer"] = s.driver.NFSServer()
+		volInfo.VolumeContext[PublishContextNFSServer] = s.driver.NFSServer()
 	}
-	volInfo.VolumeContext["nfsPath"] = mountpoint
+	volInfo.VolumeContext[PublishContextNFSPath] = mountpoint
 
 	return volInfo, nil
 }
@@ -1057,7 +1107,7 @@ func (s *ControllerServer) createISCSITargetForClone(ctx context.Context, volume
 		CapacityBytes: capacityBytes,
 		DatasetPath:   datasetPath,
 		PoolName:      pool,
-		Protocol:      "iscsi",
+		Protocol:      ProtocolISCSI,
 		TargetIQN:     fullIQN,
 		TargetPortal:  s.driver.ISCSIPortal(),
 		LUN:           0,
@@ -1073,9 +1123,9 @@ func (s *ControllerServer) createISCSITargetForClone(ctx context.Context, volume
 		},
 	}
 
-	volInfo.VolumeContext["targetPortal"] = s.driver.ISCSIPortal()
-	volInfo.VolumeContext["targetIQN"] = fullIQN
-	volInfo.VolumeContext["lun"] = "0"
+	volInfo.VolumeContext[PublishContextTargetPortal] = s.driver.ISCSIPortal()
+	volInfo.VolumeContext[PublishContextTargetIQN] = fullIQN
+	volInfo.VolumeContext[PublishContextLUN] = "0"
 
 	return volInfo, nil
 }
@@ -1191,6 +1241,13 @@ func (s *ControllerServer) ControllerPublishVolume(ctx context.Context, req *csi
 		return nil, status.Error(codes.InvalidArgument, "volume capability is required")
 	}
 
+	// Validate node exists — only enforced when the node service is co-located
+	// (e.g., sanity tests with mode=all). In production controller-only mode,
+	// no nodes are registered so all node IDs are accepted.
+	if !s.driver.IsNodeRegistered(req.NodeId) {
+		return nil, status.Errorf(codes.NotFound, "node %s not found", req.NodeId)
+	}
+
 	// Parse volume ID to get dataset path
 	pool, name, err := s.driver.ParseVolumeID(req.VolumeId)
 	if err != nil {
@@ -1236,11 +1293,11 @@ func (s *ControllerServer) ControllerPublishVolume(ctx context.Context, req *csi
 		publishContext[PublishContextLUN] = fmt.Sprintf("%d", volInfo.LUN)
 	} else if hasValidNFSInfo {
 		publishContext[PublishContextProtocol] = volInfo.Protocol
-		publishContext[PublishContextNFSServer] = volInfo.VolumeContext["nfsServer"]
+		publishContext[PublishContextNFSServer] = volInfo.VolumeContext[PublishContextNFSServer]
 		publishContext[PublishContextNFSPath] = volInfo.NFSPath
 	} else {
 		// Volume exists in TrueNAS but not in cache - determine protocol from dataset type
-		if dataset.Type == "VOLUME" {
+		if dataset.Type == datasetTypeVolume {
 			// iSCSI ZVOL - reconstruct iSCSI info from TrueNAS
 			publishContext[PublishContextProtocol] = ProtocolISCSI
 			publishContext[PublishContextTargetPortal] = s.driver.ISCSIPortal()
@@ -1375,7 +1432,7 @@ func (s *ControllerServer) ListVolumes(ctx context.Context, req *csi.ListVolumes
 
 		// Determine capacity based on dataset type
 		var capacityBytes int64
-		if dataset.Type == "VOLUME" {
+		if dataset.Type == datasetTypeVolume {
 			// iSCSI ZVOL - use volsize
 			capacityBytes = dataset.Volsize
 		} else {
@@ -1810,7 +1867,7 @@ func (s *ControllerServer) ControllerGetVolume(ctx context.Context, req *csi.Con
 //
 // Returns nil if encryption is not enabled.
 func parseEncryptionOptions(parameters map[string]string) *client.EncryptionOptions {
-	enabled, ok := parameters["encryption"]
+	enabled, ok := parameters[paramEncryption]
 	if !ok || !strings.EqualFold(enabled, "true") {
 		return nil
 	}
@@ -1820,27 +1877,27 @@ func parseEncryptionOptions(parameters map[string]string) *client.EncryptionOpti
 	}
 
 	// Algorithm
-	if val, ok := parameters["encryption.algorithm"]; ok && val != "" {
+	if val, ok := parameters[paramEncryptionAlgorithm]; ok && val != "" {
 		opts.Algorithm = strings.ToUpper(val)
 	}
 
 	// Passphrase
-	if val, ok := parameters["encryption.passphrase"]; ok && val != "" {
+	if val, ok := parameters[paramEncryptionPassphrase]; ok && val != "" {
 		opts.Passphrase = &val
 	}
 
 	// Key (hex-encoded, 64 chars)
-	if val, ok := parameters["encryption.key"]; ok && val != "" {
+	if val, ok := parameters[paramEncryptionKey]; ok && val != "" {
 		opts.Key = &val
 	}
 
 	// Generate key automatically
-	if val, ok := parameters["encryption.generateKey"]; ok && strings.EqualFold(val, "true") {
+	if val, ok := parameters[paramEncryptionGenerateKey]; ok && strings.EqualFold(val, "true") {
 		opts.GenerateKey = true
 	}
 
 	// PBKDF2 iterations
-	if val, ok := parameters["encryption.pbkdf2iters"]; ok {
+	if val, ok := parameters[paramEncryptionPBKDF2Iters]; ok {
 		if iters, err := strconv.Atoi(val); err == nil && iters >= 100000 {
 			opts.Pbkdf2iters = iters
 		}
@@ -1864,7 +1921,7 @@ func parseEncryptionOptions(parameters map[string]string) *client.EncryptionOpti
 //
 // Returns nil if no snapshot.schedule is specified.
 func (s *ControllerServer) createSnapshotTaskFromParameters(ctx context.Context, datasetPath string, parameters map[string]string) (*client.SnapshotTask, error) {
-	schedule, ok := parameters["snapshot.schedule"]
+	schedule, ok := parameters[paramSnapshotSchedule]
 	if !ok || schedule == "" {
 		return nil, nil // No snapshot schedule configured
 	}
@@ -1887,13 +1944,13 @@ func (s *ControllerServer) createSnapshotTaskFromParameters(ctx context.Context,
 
 	// Naming schema
 	namingSchema := defaultSnapshotNamingSchema
-	if val, ok := parameters["snapshot.naming"]; ok && val != "" {
+	if val, ok := parameters[paramSnapshotNaming]; ok && val != "" {
 		namingSchema = val
 	}
 
 	// Retention value
 	retentionValue := defaultSnapshotRetention
-	if val, ok := parameters["snapshot.retention"]; ok {
+	if val, ok := parameters[paramSnapshotRetention]; ok {
 		if parsed, err := strconv.Atoi(val); err == nil && parsed > 0 {
 			retentionValue = parsed
 		}
@@ -1901,7 +1958,7 @@ func (s *ControllerServer) createSnapshotTaskFromParameters(ctx context.Context,
 
 	// Retention unit
 	retentionUnit := defaultSnapshotRetentionUnit
-	if val, ok := parameters["snapshot.retentionUnit"]; ok {
+	if val, ok := parameters[paramSnapshotRetentionUnit]; ok {
 		unit := strings.ToUpper(val)
 		switch unit {
 		case "HOUR", "DAY", "WEEK", "MONTH", "YEAR":
@@ -1911,7 +1968,7 @@ func (s *ControllerServer) createSnapshotTaskFromParameters(ctx context.Context,
 
 	// Recursive (default: false)
 	recursive := false
-	if val, ok := parameters["snapshot.recursive"]; ok {
+	if val, ok := parameters[paramSnapshotRecursive]; ok {
 		recursive = strings.EqualFold(val, "true")
 	}
 

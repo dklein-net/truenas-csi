@@ -9,6 +9,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"syscall"
 	"time"
@@ -205,6 +206,13 @@ type Driver struct {
 	nodeCaps       []*csi.NodeServiceCapability
 	pluginCaps     []*csi.PluginCapability
 	volumeCaps     []*csi.VolumeCapability_AccessMode
+
+	// registeredNodes tracks nodes that have called NodeGetInfo.
+	// Used by ControllerPublishVolume to validate node IDs when both
+	// controller and node services run in the same process (e.g., sanity tests).
+	// In production controller-only mode, this stays empty and validation is skipped,
+	// allowing any node to mount volumes (fixes multi-node NFS scheduling).
+	registeredNodes sync.Map
 }
 
 // DriverMode represents the operating mode of the CSI driver
@@ -375,6 +383,7 @@ func NewDriver(config *DriverConfig) (*Driver, error) {
 			return nil, fmt.Errorf("failed to create node server: %w", err)
 		}
 		d.nodeServer = nodeServer
+		d.RegisterNode(config.NodeID)
 	}
 
 	return d, nil
@@ -694,6 +703,27 @@ func (d *Driver) NodeID() string {
 	return d.nodeID
 }
 
+// RegisterNode records a node ID from NodeGetInfo.
+func (d *Driver) RegisterNode(nodeID string) {
+	d.registeredNodes.Store(nodeID, struct{}{})
+}
+
+// IsNodeRegistered checks if a node ID has been registered via NodeGetInfo.
+// Returns true if the node is known, or true if no nodes have been registered
+// (controller-only mode where node validation is skipped).
+func (d *Driver) IsNodeRegistered(nodeID string) bool {
+	hasAny := false
+	d.registeredNodes.Range(func(_, _ any) bool {
+		hasAny = true
+		return false
+	})
+	if !hasAny {
+		return true // No nodes registered (controller-only mode) — skip validation
+	}
+	_, ok := d.registeredNodes.Load(nodeID)
+	return ok
+}
+
 // NFSServer returns the configured NFS server address
 func (d *Driver) NFSServer() string {
 	return d.nfsServer
@@ -745,7 +775,7 @@ func (d *Driver) ParseVolumeID(volumeID string) (pool, name string, err error) {
 
 // GetProtocolFromParameters extracts the protocol from StorageClass parameters
 func (d *Driver) GetProtocolFromParameters(parameters map[string]string) string {
-	if protocol, ok := parameters["protocol"]; ok {
+	if protocol, ok := parameters[paramProtocol]; ok {
 		return strings.ToLower(protocol)
 	}
 	return ProtocolNFS
@@ -753,7 +783,7 @@ func (d *Driver) GetProtocolFromParameters(parameters map[string]string) string 
 
 // GetPoolFromParameters extracts the pool from StorageClass parameters
 func (d *Driver) GetPoolFromParameters(parameters map[string]string) string {
-	if pool, ok := parameters["pool"]; ok {
+	if pool, ok := parameters[paramPool]; ok {
 		return pool
 	}
 	return d.defaultPool
@@ -761,10 +791,10 @@ func (d *Driver) GetPoolFromParameters(parameters map[string]string) string {
 
 // GetISCSIIQNBaseFromParameters extracts the IQN base from StorageClass parameters
 func (d *Driver) GetISCSIIQNBaseFromParameters(parameters map[string]string) string {
-	if iqnBase, ok := parameters["iscsi.iqn-base"]; ok {
+	if iqnBase, ok := parameters[paramISCSIIQNBase]; ok {
 		return iqnBase
 	}
-	if iqnBase, ok := parameters["iscsi.iqn-prefix"]; ok {
+	if iqnBase, ok := parameters[paramISCSIIQNPrefix]; ok {
 		return iqnBase
 	}
 	return d.iscsiIQNBase
@@ -774,12 +804,12 @@ func (d *Driver) GetISCSIIQNBaseFromParameters(parameters map[string]string) str
 func (d *Driver) GetISCSIDeleteOptionsFromParameters(parameters map[string]string) *ISCSIDeleteOptions {
 	opts := &ISCSIDeleteOptions{}
 
-	if val, ok := parameters["forceDelete"]; ok {
-		opts.ForceDelete = strings.ToLower(val) == "true"
+	if val, ok := parameters[paramForceDelete]; ok {
+		opts.ForceDelete = strings.EqualFold(val, "true")
 	}
 
-	if val, ok := parameters["deleteExtentsWithTarget"]; ok {
-		opts.DeleteExtentsWithTarget = strings.ToLower(val) == "true"
+	if val, ok := parameters[paramDeleteExtentsWithTarget]; ok {
+		opts.DeleteExtentsWithTarget = strings.EqualFold(val, "true")
 	}
 
 	return opts
@@ -858,7 +888,7 @@ func (d *Driver) reconstructVolumeFromTrueNAS(ctx context.Context, volumeID stri
 	}
 
 	// Determine protocol and capacity based on dataset type
-	if dataset.Type == "VOLUME" {
+	if dataset.Type == datasetTypeVolume {
 		volInfo.Protocol = ProtocolISCSI
 		volInfo.CapacityBytes = dataset.Volsize
 		if volInfo.CapacityBytes == 0 {
@@ -883,9 +913,9 @@ func (d *Driver) reconstructVolumeFromTrueNAS(ctx context.Context, volumeID stri
 					// Construct the full IQN
 					volInfo.TargetIQN = d.iscsiIQNBase + ":" + target.Name
 					volInfo.TargetPortal = d.iscsiPortal
-					volInfo.VolumeContext["targetPortal"] = d.iscsiPortal
-					volInfo.VolumeContext["targetIQN"] = volInfo.TargetIQN
-					volInfo.VolumeContext["lun"] = fmt.Sprintf("%d", volInfo.LUN)
+					volInfo.VolumeContext[PublishContextTargetPortal] = d.iscsiPortal
+					volInfo.VolumeContext[PublishContextTargetIQN] = volInfo.TargetIQN
+					volInfo.VolumeContext[PublishContextLUN] = fmt.Sprintf("%d", volInfo.LUN)
 				}
 			}
 		}
@@ -898,9 +928,9 @@ func (d *Driver) reconstructVolumeFromTrueNAS(ctx context.Context, volumeID stri
 		volInfo.NFSPath = dataset.Mountpoint
 
 		if d.nfsServer != "" {
-			volInfo.VolumeContext["nfsServer"] = d.nfsServer
+			volInfo.VolumeContext[PublishContextNFSServer] = d.nfsServer
 		}
-		volInfo.VolumeContext["nfsPath"] = dataset.Mountpoint
+		volInfo.VolumeContext[PublishContextNFSPath] = dataset.Mountpoint
 
 		d.log.V(LogLevelDebug).Info("Reconstructed NFS volume", "volumeId", volumeID, "capacityBytes", volInfo.CapacityBytes, "path", dataset.Mountpoint)
 	}

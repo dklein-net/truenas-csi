@@ -15,6 +15,13 @@ import (
 
 const (
 	defaultMountTimeout = 110 * time.Second
+
+	// Mount options
+	mountOptionHard     = "hard"
+	mountOptionReadOnly = "ro"
+
+	// Filesystem type for NFS mounts
+	fsTypeNFS = "nfs"
 )
 
 // StorageClass parameter keys for NFS configuration
@@ -57,15 +64,15 @@ func parseNFSConfig(publishContext, volumeContext map[string]string) *NFSConfig 
 	config := &NFSConfig{}
 
 	// Server
-	config.Server = publishContext["nfsServer"]
+	config.Server = publishContext[PublishContextNFSServer]
 	if config.Server == "" {
-		config.Server = volumeContext["nfsServer"]
+		config.Server = volumeContext[PublishContextNFSServer]
 	}
 
 	// Path
-	config.Path = publishContext["nfsPath"]
+	config.Path = publishContext[PublishContextNFSPath]
 	if config.Path == "" {
-		config.Path = volumeContext["nfsPath"]
+		config.Path = volumeContext[PublishContextNFSPath]
 	}
 
 	// Custom mount options (includes nfsvers if user specifies it)
@@ -91,11 +98,11 @@ func getMountOptions(config *NFSConfig, readonly bool) []string {
 		options = append(options, config.MountOptions...)
 	} else {
 		// Minimal defaults - let kernel handle rsize/wsize/timeo
-		options = []string{"hard"}
+		options = []string{mountOptionHard}
 	}
 
 	if readonly {
-		options = append(options, "ro")
+		options = append(options, mountOptionReadOnly)
 	}
 
 	return options
@@ -182,8 +189,8 @@ func (h *NFSHandler) Publish(ctx context.Context, req *PublishRequest) error {
 	var mountOptions []string
 	if len(req.MountFlags) > 0 {
 		mountOptions = req.MountFlags
-		if req.ReadOnly && !slices.Contains(mountOptions, "ro") {
-			mountOptions = append(mountOptions, "ro")
+		if req.ReadOnly && !slices.Contains(mountOptions, mountOptionReadOnly) {
+			mountOptions = append(mountOptions, mountOptionReadOnly)
 		}
 	} else {
 		mountOptions = getMountOptions(config, req.ReadOnly)
@@ -191,7 +198,7 @@ func (h *NFSHandler) Publish(ctx context.Context, req *PublishRequest) error {
 
 	h.log.V(LogLevelDebug).Info("Mounting NFS volume", "source", source, "target", req.TargetPath, "options", mountOptions)
 
-	if err := h.mountWithTimeout(ctx, source, req.TargetPath, "nfs", mountOptions); err != nil {
+	if err := h.mountWithTimeout(ctx, source, req.TargetPath, fsTypeNFS, mountOptions); err != nil {
 		return fmt.Errorf("failed to mount NFS volume %s: %w", source, err)
 	}
 
