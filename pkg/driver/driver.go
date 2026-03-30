@@ -191,10 +191,11 @@ type Driver struct {
 	log    logr.Logger
 	client *client.Client
 
-	defaultPool  string
-	nfsServer    string
-	iscsiPortal  string
-	iscsiIQNBase string
+	defaultPool        string
+	defaultDatasetPath string
+	nfsServer          string
+	iscsiPortal        string
+	iscsiIQNBase       string
 
 	identityServer   csi.IdentityServer
 	controllerServer csi.ControllerServer
@@ -764,13 +765,22 @@ func (d *Driver) GenerateVolumeID(pool, name string) string {
 	return fmt.Sprintf("%s/%s", pool, name)
 }
 
-// ParseVolumeID extracts pool and name from a volume ID
-func (d *Driver) ParseVolumeID(volumeID string) (pool, name string, err error) {
-	parts := strings.SplitN(volumeID, "/", 2)
-	if len(parts) != 2 {
-		return "", "", fmt.Errorf("invalid volume ID format: %s", volumeID)
+// GenerateVolumeIDFromDatasetPath creates a volume ID from datasetPath
+func (d *Driver) GenerateVolumeIDFromDatasetPath(datasetPath string) string {
+	return fmt.Sprintf("%s", datasetPath)
+}
+
+// ParseVolumeID extracts pool, datasetPath and name from a volume ID
+func (d *Driver) ParseVolumeID(volumeID string) (pool, datasetPath, name string, err error) {
+	parts := strings.SplitN(volumeID, "/", -1)
+	if len(parts) < 2 {
+		return "", "", "", fmt.Errorf("invalid volume ID format: %s", volumeID)
 	}
-	return parts[0], parts[1], nil
+	pool = strings.Join(parts[:1], "/")
+	datasetPath = strings.Join(parts[1:len(parts)-1], "/")
+	name = strings.Join(parts[len(parts)-1:], "/")
+
+	return pool, datasetPath, name, nil
 }
 
 // GetProtocolFromParameters extracts the protocol from StorageClass parameters
@@ -787,6 +797,14 @@ func (d *Driver) GetPoolFromParameters(parameters map[string]string) string {
 		return pool
 	}
 	return d.defaultPool
+}
+
+// GetDatasetPathFromParameters extracts the datasetPath from StorageClass parameters
+func (d *Driver) GetDatasetPathFromParameters(parameters map[string]string) string {
+	if datasetPath, ok := parameters[paramDatasetPath]; ok {
+		return datasetPath
+	}
+	return d.defaultDatasetPath
 }
 
 // GetISCSIIQNBaseFromParameters extracts the IQN base from StorageClass parameters
@@ -865,12 +883,17 @@ func (d *Driver) GetVolumeInfoWithContext(ctx context.Context, volumeID string) 
 
 // reconstructVolumeFromTrueNAS queries TrueNAS to rebuild volume metadata.
 func (d *Driver) reconstructVolumeFromTrueNAS(ctx context.Context, volumeID string) (*VolumeInfo, error) {
-	pool, datasetName, err := d.ParseVolumeID(volumeID)
+	pool, dsPath, datasetName, err := d.ParseVolumeID(volumeID)
 	if err != nil {
 		return nil, fmt.Errorf("invalid volume ID %s: %w", volumeID, err)
 	}
 
-	datasetPath := pool + "/" + datasetName
+	datasetPath := ""
+	if dsPath == "" {
+		datasetPath = fmt.Sprintf("%s/%s", pool, datasetName)
+	} else {
+		datasetPath = fmt.Sprintf("%s/%s/%s", pool, dsPath, datasetName)
+	}
 
 	// Query TrueNAS for the dataset
 	dataset, err := d.client.GetDataset(ctx, datasetPath)

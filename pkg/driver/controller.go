@@ -66,35 +66,36 @@ const (
 const (
 	paramProtocol     = "protocol"
 	paramPool         = "pool"
+	paramDatasetPath  = "datasetPath"
 	paramCompression  = "compression"
 	paramSync         = "sync"
 	paramVolBlockSize = "volblocksize"
 
 	// iSCSI parameters
-	paramISCSIBlockSize  = "iscsi.blocksize"
-	paramISCSIIQNBase    = "iscsi.iqn-base"
-	paramISCSIIQNPrefix  = "iscsi.iqn-prefix"
-	paramISCSIChapUser   = "iscsi.chapUser"
-	paramISCSIChapSecret = "iscsi.chapSecret"
+	paramISCSIBlockSize      = "iscsi.blocksize"
+	paramISCSIIQNBase        = "iscsi.iqn-base"
+	paramISCSIIQNPrefix      = "iscsi.iqn-prefix"
+	paramISCSIChapUser       = "iscsi.chapUser"
+	paramISCSIChapSecret     = "iscsi.chapSecret"
 	paramISCSIChapPeerUser   = "iscsi.chapPeerUser"
 	paramISCSIChapPeerSecret = "iscsi.chapPeerSecret"
 	paramISCSIInitiators     = "iscsi.initiators"
 
 	// iSCSI auth types
-	iscsiAuthTypeCHAP    = "chap"
-	iscsiAuthTypeMutual  = "CHAP_MUTUAL"
+	iscsiAuthTypeCHAP   = "chap"
+	iscsiAuthTypeMutual = "CHAP_MUTUAL"
 
 	// Delete options
 	paramForceDelete             = "forceDelete"
 	paramDeleteExtentsWithTarget = "deleteExtentsWithTarget"
 
 	// Encryption parameters
-	paramEncryption             = "encryption"
-	paramEncryptionAlgorithm    = "encryption.algorithm"
-	paramEncryptionPassphrase   = "encryption.passphrase"
-	paramEncryptionKey          = "encryption.key"
-	paramEncryptionGenerateKey  = "encryption.generateKey"
-	paramEncryptionPBKDF2Iters  = "encryption.pbkdf2iters"
+	paramEncryption            = "encryption"
+	paramEncryptionAlgorithm   = "encryption.algorithm"
+	paramEncryptionPassphrase  = "encryption.passphrase"
+	paramEncryptionKey         = "encryption.key"
+	paramEncryptionGenerateKey = "encryption.generateKey"
+	paramEncryptionPBKDF2Iters = "encryption.pbkdf2iters"
 
 	// Snapshot parameters
 	paramSnapshotSchedule      = "snapshot.schedule"
@@ -105,7 +106,7 @@ const (
 )
 
 const (
-	_ = iota
+	_   = iota
 	KiB = 1 << (10 * iota)
 	MiB
 	GiB
@@ -284,10 +285,16 @@ func (s *ControllerServer) CreateVolume(ctx context.Context, req *csi.CreateVolu
 
 	protocol := s.driver.GetProtocolFromParameters(parameters)
 	pool := s.driver.GetPoolFromParameters(parameters)
+	datasetPathParam := s.driver.GetDatasetPathFromParameters(parameters)
 
 	volumeName := SanitizeVolumeName(req.Name)
 	volumeID := s.driver.GenerateVolumeID(pool, volumeName)
+
 	datasetPath := pool + "/" + volumeName
+	if datasetPathParam != "" {
+		datasetPath = pool + "/" + datasetPathParam + "/" + volumeName
+		volumeID = s.driver.GenerateVolumeIDFromDatasetPath(datasetPath)
+	}
 
 	existingDataset, err := s.driver.Client().GetDataset(ctx, datasetPath)
 	if err == nil && existingDataset != nil {
@@ -1141,17 +1148,19 @@ func (s *ControllerServer) DeleteVolume(ctx context.Context, req *csi.DeleteVolu
 		return nil, status.Error(codes.InvalidArgument, "volume ID is required")
 	}
 
-	pool, name, err := s.driver.ParseVolumeID(req.VolumeId)
-	if err != nil {
-		// Invalid volume ID format means volume doesn't exist - return success (idempotent)
-		s.driver.Log().V(LogLevelDebug).Info("Invalid volume ID format, treating as already deleted", "volumeId", req.VolumeId)
-		return &csi.DeleteVolumeResponse{}, nil
-	}
+	/* 	pool, name, err := s.driver.ParseVolumeID(req.VolumeId)
+	   	if err != nil {
+	   		// Invalid volume ID format means volume doesn't exist - return success (idempotent)
+	   		s.driver.Log().V(LogLevelDebug).Info("Invalid volume ID format, treating as already deleted", "volumeId", req.VolumeId)
+	   		return &csi.DeleteVolumeResponse{}, nil
+	   	}
+	*/
 
-	datasetPath := fmt.Sprintf("%s/%s", pool, name)
+	// dklein TODO
+	datasetPath := fmt.Sprintf("%s", req.VolumeId)
 
 	// Check if dataset exists - return success if already deleted (idempotent)
-	_, err = s.driver.Client().GetDataset(ctx, datasetPath)
+	_, err := s.driver.Client().GetDataset(ctx, datasetPath)
 	if err != nil {
 		if client.IsNotFoundError(err) {
 			s.driver.Log().V(LogLevelDebug).Info("Volume already deleted", "volumeId", req.VolumeId)
@@ -1249,11 +1258,17 @@ func (s *ControllerServer) ControllerPublishVolume(ctx context.Context, req *csi
 	}
 
 	// Parse volume ID to get dataset path
-	pool, name, err := s.driver.ParseVolumeID(req.VolumeId)
+	pool, dsPath, name, err := s.driver.ParseVolumeID(req.VolumeId)
 	if err != nil {
 		return nil, status.Errorf(codes.NotFound, "volume not found: invalid volume ID format")
 	}
-	datasetPath := fmt.Sprintf("%s/%s", pool, name)
+
+	datasetPath := ""
+	if dsPath == "" {
+		datasetPath = fmt.Sprintf("%s/%s", pool, name)
+	} else {
+		datasetPath = fmt.Sprintf("%s/%s/%s", pool, dsPath, name)
+	}
 
 	// Check if volume exists by querying TrueNAS
 	dataset, err := s.driver.Client().GetDataset(ctx, datasetPath)
@@ -1371,12 +1386,18 @@ func (s *ControllerServer) ValidateVolumeCapabilities(ctx context.Context, req *
 		return nil, status.Error(codes.InvalidArgument, "volume capabilities are required")
 	}
 
-	pool, name, err := s.driver.ParseVolumeID(req.VolumeId)
+	pool, dsPath, name, err := s.driver.ParseVolumeID(req.VolumeId)
 	if err != nil {
 		return nil, status.Errorf(codes.NotFound, "volume not found: invalid volume ID format")
 	}
 
-	datasetPath := fmt.Sprintf("%s/%s", pool, name)
+	datasetPath := ""
+	if dsPath == "" {
+		datasetPath = fmt.Sprintf("%s/%s", pool, name)
+	} else {
+		datasetPath = fmt.Sprintf("%s/%s/%s", pool, dsPath, name)
+	}
+
 	_, err = s.driver.Client().GetDataset(ctx, datasetPath)
 	if err != nil {
 		return nil, status.Errorf(codes.NotFound, "volume not found: %v", err)
@@ -1675,12 +1696,17 @@ func (s *ControllerServer) ListSnapshots(ctx context.Context, req *csi.ListSnaps
 			datasetPath = volInfo.DatasetPath
 		} else {
 			// Volume not in cache - parse volume ID directly
-			pool, name, parseErr := s.driver.ParseVolumeID(req.SourceVolumeId)
+			pool, dsPath, name, parseErr := s.driver.ParseVolumeID(req.SourceVolumeId)
 			if parseErr != nil {
 				// Invalid volume ID format - return empty (volume doesn't exist)
 				return &csi.ListSnapshotsResponse{Entries: entries}, nil
 			}
-			datasetPath = fmt.Sprintf("%s/%s", pool, name)
+
+			if dsPath == "" {
+				datasetPath = fmt.Sprintf("%s/%s", pool, name)
+			} else {
+				datasetPath = fmt.Sprintf("%s/%s/%s", pool, dsPath, name)
+			}
 		}
 
 		snapshots, err := s.driver.Client().ListSnapshots(ctx, datasetPath)
