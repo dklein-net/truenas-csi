@@ -241,10 +241,11 @@ type DriverConfig struct {
 	TrueNASAPIKey   string
 	TrueNASInsecure bool
 
-	DefaultPool  string
-	NFSServer    string
-	ISCSIPortal  string
-	ISCSIIQNBase string
+	DefaultPool        string
+	DefaultDatasetPath string
+	NFSServer          string
+	ISCSIPortal        string
+	ISCSIIQNBase       string
 
 	// Logger is the structured logger for the driver and client.
 	// If not set, logging for the client will be disabled.
@@ -339,6 +340,14 @@ func NewDriver(config *DriverConfig) (*Driver, error) {
 	}
 	log.V(LogLevelInfo).Info("Pool validated successfully", "pool", config.DefaultPool, "guid", pool.GUID)
 
+	// Validate that the default datasetPath exists
+	log.V(LogLevelInfo).Info("Validating Dataset exists in TrueNAS", "dataset", config.DefaultDatasetPath)
+	dataset, err := truenasClient.GetDataset(ctx, config.DefaultPool+"/"+config.DefaultDatasetPath)
+	if err != nil {
+		return nil, fmt.Errorf("failed to validate dataset '%s': %w\n\nPlease create the Dataset in TrueNAS UI (Storage → Create Dataset) before using the CSI driver", config.DefaultDatasetPath, err)
+	}
+	log.V(LogLevelInfo).Info("Dataset validated successfully", "dataset", config.DefaultDatasetPath, "id", dataset.ID)
+
 	// Default to "all" mode if not specified
 	mode := config.Mode
 	if mode == "" {
@@ -348,16 +357,17 @@ func NewDriver(config *DriverConfig) (*Driver, error) {
 	log.V(LogLevelInfo).Info("Initializing driver", "mode", mode)
 
 	d := &Driver{
-		name:         config.DriverName,
-		version:      config.DriverVersion,
-		nodeID:       config.NodeID,
-		endpoint:     config.Endpoint,
-		log:          log,
-		client:       truenasClient,
-		defaultPool:  config.DefaultPool,
-		nfsServer:    config.NFSServer,
-		iscsiPortal:  config.ISCSIPortal,
-		iscsiIQNBase: config.ISCSIIQNBase,
+		name:               config.DriverName,
+		version:            config.DriverVersion,
+		nodeID:             config.NodeID,
+		endpoint:           config.Endpoint,
+		log:                log,
+		client:             truenasClient,
+		defaultPool:        config.DefaultPool,
+		defaultDatasetPath: config.DefaultDatasetPath,
+		nfsServer:          config.NFSServer,
+		iscsiPortal:        config.ISCSIPortal,
+		iscsiIQNBase:       config.ISCSIIQNBase,
 	}
 
 	d.initializeCapabilities()
@@ -738,6 +748,11 @@ func (d *Driver) ISCSIPortal() string {
 // DefaultPool returns the default storage pool
 func (d *Driver) DefaultPool() string {
 	return d.defaultPool
+}
+
+// DefaultDatasetPath returns the default datasetpath within the pool
+func (d *Driver) DefaultDatasetPath() string {
+	return d.defaultDatasetPath
 }
 
 // ISCSIIQNBase returns the base IQN for iSCSI targets

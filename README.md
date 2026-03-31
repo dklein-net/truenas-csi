@@ -141,6 +141,7 @@ sudo systemctl enable microk8s-mount-propagation
 | `truenasURL` | WebSocket URL to TrueNAS API | `wss://10.0.0.100/api/current` |
 | `truenasInsecure` | Skip TLS verification | `true` (for self-signed certs) |
 | `defaultPool` | Default ZFS pool for volumes | `tank` |
+| `defaultDatasetPath` | Default DatasetPath within pool for volumes | ` ` |
 | `nfsServer` | NFS server address | `10.0.0.100` |
 | `iscsiPortal` | iSCSI portal address | `10.0.0.100:3260` |
 | `iscsiIQNBase` | Base IQN for iSCSI targets | `iqn.2024-01.com.example` |
@@ -153,6 +154,7 @@ sudo systemctl enable microk8s-mount-propagation
 |-----------|-------------|--------|
 | `protocol` | Storage protocol | `nfs`, `iscsi` |
 | `pool` | ZFS pool (overrides default) | pool name |
+| `datasetPath` | DatasetPath within pool (overrides default) | datasetPath name |
 | `compression` | ZFS compression algorithm | `OFF`, `LZ4`, `GZIP`, `ZSTD`, `ZLE`, `LZJB` |
 | `sync` | ZFS sync mode | `STANDARD`, `ALWAYS`, `DISABLED` |
 
