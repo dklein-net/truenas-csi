@@ -117,9 +117,7 @@ func loadEnvConfig(config *driver.DriverConfig) error {
 		config.DefaultPool = val
 	}
 
-	if val := os.Getenv("TRUENAS_DEFAULT_DATASET_PATH"); val == "" {
-		return fmt.Errorf("TRUENAS_DEFAULT_DATASET_PATH is missing")
-	} else {
+	if val := os.Getenv("TRUENAS_DEFAULT_DATASET_PATH"); val != "" {
 		config.DefaultDatasetPath = val
 	}
 
