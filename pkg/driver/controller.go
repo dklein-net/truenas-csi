@@ -1148,19 +1148,17 @@ func (s *ControllerServer) DeleteVolume(ctx context.Context, req *csi.DeleteVolu
 		return nil, status.Error(codes.InvalidArgument, "volume ID is required")
 	}
 
-	/* 	pool, name, err := s.driver.ParseVolumeID(req.VolumeId)
-	   	if err != nil {
-	   		// Invalid volume ID format means volume doesn't exist - return success (idempotent)
-	   		s.driver.Log().V(LogLevelDebug).Info("Invalid volume ID format, treating as already deleted", "volumeId", req.VolumeId)
-	   		return &csi.DeleteVolumeResponse{}, nil
-	   	}
-	*/
+	pool, dsPath, name, err := s.driver.ParseVolumeID(req.VolumeId)
+	if err != nil {
+		// Invalid volume ID format means volume doesn't exist - return success (idempotent)
+		s.driver.Log().V(LogLevelDebug).Info("Invalid volume ID format, treating as already deleted", "volumeId", req.VolumeId)
+		return &csi.DeleteVolumeResponse{}, nil
+	}
 
-	// dklein TODO
-	datasetPath := fmt.Sprintf("%s", req.VolumeId)
+	datasetPath := fmt.Sprintf("%s/%s/%s", pool, dsPath, name)
 
 	// Check if dataset exists - return success if already deleted (idempotent)
-	_, err := s.driver.Client().GetDataset(ctx, datasetPath)
+	_, err = s.driver.Client().GetDataset(ctx, datasetPath)
 	if err != nil {
 		if client.IsNotFoundError(err) {
 			s.driver.Log().V(LogLevelDebug).Info("Volume already deleted", "volumeId", req.VolumeId)
