@@ -117,6 +117,12 @@ func loadEnvConfig(config *driver.DriverConfig) error {
 		config.DefaultPool = val
 	}
 
+	if val := os.Getenv("TRUENAS_DEFAULT_DATASET_PATH"); val == "" {
+		return fmt.Errorf("TRUENAS_DEFAULT_DATASET_PATH is missing")
+	} else {
+		config.DefaultDatasetPath = val
+	}
+
 	// Optional: NFS server and iSCSI portal are derived from TrueNAS URL if not set
 	if val := os.Getenv("TRUENAS_NFS_SERVER"); val != "" {
 		config.NFSServer = val

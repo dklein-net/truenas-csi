@@ -8,8 +8,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/truenas/truenas-csi/pkg/driver"
 	sanity "github.com/kubernetes-csi/csi-test/v5/pkg/sanity"
+	"github.com/truenas/truenas-csi/pkg/driver"
 	"k8s.io/klog/v2/textlogger"
 )
 
@@ -28,6 +28,7 @@ const (
 //   - TRUENAS_URL: WebSocket URL (e.g., wss://10.0.0.1/api/current)
 //   - TRUENAS_API_KEY: API key for authentication
 //   - TRUENAS_DEFAULT_POOL: Storage pool to use (default: tank)
+//   - TRUENAS_DEFAULT_DATASET_PATH: DatasetPath in Storage pool to use (default: "")
 //   - TRUENAS_NFS_SERVER: NFS server IP/hostname
 //   - TRUENAS_ISCSI_PORTAL: iSCSI portal (e.g., 10.0.0.1:3260)
 //
@@ -175,15 +176,16 @@ func buildTestConfig(endpoint string) *driver.DriverConfig {
 	}
 
 	config := &driver.DriverConfig{
-		NodeID:        "sanity-test-node",
-		Endpoint:      "unix://" + endpoint,
-		TrueNASURL:    os.Getenv("TRUENAS_URL"),
-		TrueNASAPIKey: os.Getenv("TRUENAS_API_KEY"),
-		DefaultPool:   pool,
-		NFSServer:     os.Getenv("TRUENAS_NFS_SERVER"),
-		ISCSIPortal:   os.Getenv("TRUENAS_ISCSI_PORTAL"),
-		ISCSIIQNBase:  os.Getenv("TRUENAS_ISCSI_IQN_BASE"),
-		Logger:        textlogger.NewLogger(textlogger.NewConfig()),
+		NodeID:             "sanity-test-node",
+		Endpoint:           "unix://" + endpoint,
+		TrueNASURL:         os.Getenv("TRUENAS_URL"),
+		TrueNASAPIKey:      os.Getenv("TRUENAS_API_KEY"),
+		DefaultPool:        pool,
+		DefaultDatasetPath: os.Getenv("TRUENAS_DEFAULT_DATASET_PATH"),
+		NFSServer:          os.Getenv("TRUENAS_NFS_SERVER"),
+		ISCSIPortal:        os.Getenv("TRUENAS_ISCSI_PORTAL"),
+		ISCSIIQNBase:       os.Getenv("TRUENAS_ISCSI_IQN_BASE"),
+		Logger:             textlogger.NewLogger(textlogger.NewConfig()),
 	}
 
 	if os.Getenv("TRUENAS_INSECURE_SKIP_VERIFY") == "true" {

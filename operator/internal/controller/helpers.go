@@ -19,6 +19,7 @@ func buildTrueNASEnvVars(csi *csiv1alpha1.TrueNASCSI) []corev1.EnvVar {
 		configMapEnvVar("TRUENAS_URL", ConfigMapName, "truenasURL", false),
 		secretEnvVar("TRUENAS_API_KEY", csi.Spec.CredentialsSecret, "api-key"),
 		configMapEnvVar("TRUENAS_DEFAULT_POOL", ConfigMapName, "defaultPool", false),
+		configMapEnvVar("TRUENAS_DEFAULT_DATASET_PATH", ConfigMapName, "defaultDatasetPath", false),
 		configMapEnvVar("TRUENAS_NFS_SERVER", ConfigMapName, "nfsServer", true),
 		configMapEnvVar("TRUENAS_ISCSI_PORTAL", ConfigMapName, "iscsiPortal", true),
 		configMapEnvVar("TRUENAS_ISCSI_IQN_BASE", ConfigMapName, "iscsiIQNBase", true),

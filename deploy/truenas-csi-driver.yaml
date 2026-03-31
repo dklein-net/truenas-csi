@@ -210,6 +210,11 @@ spec:
                 configMapKeyRef:
                   name: truenas-csi-config
                   key: defaultPool
+            - name: TRUENAS_DEFAULT_DATASET_PATH
+              valueFrom:
+                configMapKeyRef:
+                  name: truenas-csi-config
+                  key: defaultDatasetPath
             - name: TRUENAS_NFS_SERVER
               valueFrom:
                 configMapKeyRef:
