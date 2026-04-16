@@ -191,10 +191,11 @@ type Driver struct {
 	log    logr.Logger
 	client *client.Client
 
-	defaultPool  string
-	nfsServer    string
-	iscsiPortal  string
-	iscsiIQNBase string
+	defaultPool    string
+	nfsServer      string
+	iscsiPortal    string
+	iscsiPortalID  int
+	iscsiIQNBase   string
 
 	identityServer   csi.IdentityServer
 	controllerServer csi.ControllerServer
@@ -338,6 +339,25 @@ func NewDriver(config *DriverConfig) (*Driver, error) {
 	}
 	log.V(LogLevelInfo).Info("Pool validated successfully", "pool", config.DefaultPool, "guid", pool.GUID)
 
+	// Resolve iSCSI portal ID from TrueNAS (if iSCSI portal is configured)
+	var iscsiPortalID int
+	if config.ISCSIPortal != "" {
+		portalHost, _, err := net.SplitHostPort(config.ISCSIPortal)
+		if err != nil {
+			// No port specified, use the whole string as the host
+			portalHost = config.ISCSIPortal
+		}
+		portal, err := truenasClient.GetISCSIPortalByAddress(ctx, portalHost)
+		if err != nil {
+			log.V(LogLevelInfo).Info("Failed to resolve iSCSI portal ID, will retry on first use", "portal", config.ISCSIPortal, "error", err)
+		} else if portal != nil {
+			iscsiPortalID = portal.ID
+			log.V(LogLevelInfo).Info("Resolved iSCSI portal ID", "portal", config.ISCSIPortal, "portalID", iscsiPortalID)
+		} else {
+			log.V(LogLevelInfo).Info("No iSCSI portal found matching address, will retry on first use", "address", portalHost)
+		}
+	}
+
 	// Default to "all" mode if not specified
 	mode := config.Mode
 	if mode == "" {
@@ -347,16 +367,17 @@ func NewDriver(config *DriverConfig) (*Driver, error) {
 	log.V(LogLevelInfo).Info("Initializing driver", "mode", mode)
 
 	d := &Driver{
-		name:         config.DriverName,
-		version:      config.DriverVersion,
-		nodeID:       config.NodeID,
-		endpoint:     config.Endpoint,
-		log:          log,
-		client:       truenasClient,
-		defaultPool:  config.DefaultPool,
-		nfsServer:    config.NFSServer,
-		iscsiPortal:  config.ISCSIPortal,
-		iscsiIQNBase: config.ISCSIIQNBase,
+		name:          config.DriverName,
+		version:       config.DriverVersion,
+		nodeID:        config.NodeID,
+		endpoint:      config.Endpoint,
+		log:           log,
+		client:        truenasClient,
+		defaultPool:   config.DefaultPool,
+		nfsServer:     config.NFSServer,
+		iscsiPortal:   config.ISCSIPortal,
+		iscsiPortalID: iscsiPortalID,
+		iscsiIQNBase:  config.ISCSIIQNBase,
 	}
 
 	d.initializeCapabilities()
@@ -732,6 +753,35 @@ func (d *Driver) NFSServer() string {
 // ISCSIPortal returns the configured iSCSI portal address
 func (d *Driver) ISCSIPortal() string {
 	return d.iscsiPortal
+}
+
+// ISCSIPortalID returns the resolved TrueNAS portal ID for iSCSI target creation.
+// If the portal ID was not resolved at startup, it attempts lazy resolution.
+func (d *Driver) ISCSIPortalID(ctx context.Context) (int, error) {
+	if d.iscsiPortalID > 0 {
+		return d.iscsiPortalID, nil
+	}
+
+	if d.iscsiPortal == "" {
+		return 0, fmt.Errorf("iSCSI portal address is not configured (set TRUENAS_ISCSI_PORTAL)")
+	}
+
+	portalHost, _, err := net.SplitHostPort(d.iscsiPortal)
+	if err != nil {
+		portalHost = d.iscsiPortal
+	}
+
+	portal, err := d.client.GetISCSIPortalByAddress(ctx, portalHost)
+	if err != nil {
+		return 0, fmt.Errorf("failed to query iSCSI portals: %w", err)
+	}
+	if portal == nil {
+		return 0, fmt.Errorf("no iSCSI portal found matching address %q — create one in TrueNAS UI (Shares → iSCSI → Portals)", portalHost)
+	}
+
+	d.iscsiPortalID = portal.ID
+	d.log.V(LogLevelInfo).Info("Resolved iSCSI portal ID", "portal", d.iscsiPortal, "portalID", d.iscsiPortalID)
+	return d.iscsiPortalID, nil
 }
 
 // DefaultPool returns the default storage pool

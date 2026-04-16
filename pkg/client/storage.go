@@ -41,6 +41,7 @@ const (
 	methodISCSIInitiatorCreate    = "iscsi.initiator.create"
 	methodISCSIInitiatorQuery     = "iscsi.initiator.query"
 	methodISCSIInitiatorDelete    = "iscsi.initiator.delete"
+	methodISCSIPortalQuery        = "iscsi.portal.query"
 )
 
 // TrueNAS API method names for snapshots
@@ -69,9 +70,9 @@ const (
 	methodZFSResourceQuery = "zfs.resource.query"
 )
 
-// Default configuration values
+// Default iSCSI port
 const (
-	defaultISCSIPortalID = 1
+	defaultISCSIPort = 3260
 )
 
 // Dataset represents a ZFS dataset in TrueNAS.
@@ -838,16 +839,17 @@ func (c *Client) GetISCSITargetByID(ctx context.Context, id int) (*ISCSITarget, 
 }
 
 // CreateISCSITarget creates a new iSCSI target with the specified name and alias.
-func (c *Client) CreateISCSITarget(ctx context.Context, name, alias string) (*ISCSITarget, error) {
-	return c.CreateISCSITargetWithAuth(ctx, name, alias, 0, 0)
+func (c *Client) CreateISCSITarget(ctx context.Context, name, alias string, portalID int) (*ISCSITarget, error) {
+	return c.CreateISCSITargetWithAuth(ctx, name, alias, portalID, 0, 0)
 }
 
 // CreateISCSITargetWithAuth creates a new iSCSI target with optional auth and initiator groups.
+// portalID: TrueNAS portal group ID (required)
 // authTag: CHAP authentication group tag (0 to skip)
 // initiatorID: Initiator group ID (0 to skip)
-func (c *Client) CreateISCSITargetWithAuth(ctx context.Context, name, alias string, authTag, initiatorID int) (*ISCSITarget, error) {
+func (c *Client) CreateISCSITargetWithAuth(ctx context.Context, name, alias string, portalID, authTag, initiatorID int) (*ISCSITarget, error) {
 	group := ISCSITargetGroup{
-		Portal: defaultISCSIPortalID,
+		Portal: portalID,
 	}
 
 	if authTag > 0 {
@@ -1044,6 +1046,34 @@ func (c *Client) DeleteISCSIInitiator(ctx context.Context, id int) error {
 		return fmt.Errorf("failed to delete iSCSI initiator %d: %w", id, err)
 	}
 	return nil
+}
+
+// QueryISCSIPortals returns all iSCSI portals configured in TrueNAS.
+func (c *Client) QueryISCSIPortals(ctx context.Context) ([]ISCSIPortal, error) {
+	var portals []ISCSIPortal
+	err := c.Call(ctx, methodISCSIPortalQuery, []any{[][]any{}, &QueryOptions{}}, &portals)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query iSCSI portals: %w", err)
+	}
+	return portals, nil
+}
+
+// GetISCSIPortalByAddress finds the iSCSI portal whose listen addresses
+// contain the given IP. Returns nil if no matching portal is found.
+func (c *Client) GetISCSIPortalByAddress(ctx context.Context, address string) (*ISCSIPortal, error) {
+	portals, err := c.QueryISCSIPortals(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	for i := range portals {
+		for _, listen := range portals[i].Listen {
+			if listen.IP == address || listen.IP == "0.0.0.0" {
+				return &portals[i], nil
+			}
+		}
+	}
+	return nil, nil
 }
 
 // CreateSnapshot creates a new ZFS snapshot.

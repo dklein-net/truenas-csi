@@ -388,9 +388,9 @@ func TestIntegration_ISCSIFullWorkflow(t *testing.T) {
 		})
 	})
 
-	// Create Target
+	// Create Target (use portal ID 1 for integration tests — the default portal)
 	t.Run("CreateTarget", func(t *testing.T) {
-		target, err := client.CreateISCSITarget(ctx, targetName, "test-alias")
+		target, err := client.CreateISCSITarget(ctx, targetName, "test-alias", 1)
 		if err != nil {
 			t.Fatalf("CreateISCSITarget failed: %v", err)
 		}

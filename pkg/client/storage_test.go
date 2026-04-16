@@ -380,7 +380,7 @@ func TestCreateISCSITarget_Success(t *testing.T) {
 
 	client := connectTestClient(t, mock)
 
-	target, err := client.CreateISCSITarget(testContext(t), "target1", "alias1")
+	target, err := client.CreateISCSITarget(testContext(t), "target1", "alias1", 1)
 
 	assertNoError(t, err)
 	assertNotNil(t, target)
@@ -408,7 +408,7 @@ func TestCreateISCSITargetWithAuth_Success(t *testing.T) {
 
 	client := connectTestClient(t, mock)
 
-	target, err := client.CreateISCSITargetWithAuth(testContext(t), "target2", "alias2", 5, 10)
+	target, err := client.CreateISCSITargetWithAuth(testContext(t), "target2", "alias2", 1, 5, 10)
 
 	assertNoError(t, err)
 	assertNotNil(t, target)
