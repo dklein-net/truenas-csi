@@ -809,11 +809,6 @@ func (d *Driver) VolumeCaps() []*csi.VolumeCapability_AccessMode {
 	return d.volumeCaps
 }
 
-// GenerateVolumeID creates a volume ID from pool and name
-func (d *Driver) GenerateVolumeID(pool, name string) string {
-	return fmt.Sprintf("%s/%s", pool, name)
-}
-
 // ParseVolumeID extracts pool and name from a volume ID
 func (d *Driver) ParseVolumeID(volumeID string) (pool, name string, err error) {
 	parts := strings.SplitN(volumeID, "/", 2)

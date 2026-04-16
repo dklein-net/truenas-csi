@@ -64,9 +64,10 @@ const (
 
 // StorageClass parameter keys
 const (
-	paramProtocol     = "protocol"
-	paramPool         = "pool"
-	paramCompression  = "compression"
+	paramProtocol    = "protocol"
+	paramPool        = "pool"
+	paramDatasetPath = "datasetPath"
+	paramCompression = "compression"
 	paramSync         = "sync"
 	paramVolBlockSize = "volblocksize"
 	paramSparse       = "sparse"
@@ -232,6 +233,13 @@ func (s *ControllerServer) validateStorageClassParameters(ctx context.Context, p
 		}
 	}
 
+	// Validate datasetPath (no leading/trailing slashes, no path traversal)
+	if val, ok := parameters[paramDatasetPath]; ok && val != "" {
+		if strings.Contains(val, "..") || strings.HasPrefix(val, "/") || strings.HasSuffix(val, "/") {
+			return fmt.Errorf("invalid datasetPath: %s (must be a relative path with no '..' components)", val)
+		}
+	}
+
 	// Validate snapshot schedule format
 	if schedule, ok := parameters[paramSnapshotSchedule]; ok && schedule != "" {
 		parts := strings.Fields(schedule)
@@ -295,8 +303,11 @@ func (s *ControllerServer) CreateVolume(ctx context.Context, req *csi.CreateVolu
 	pool := s.driver.GetPoolFromParameters(parameters)
 
 	volumeName := SanitizeVolumeName(req.Name)
-	volumeID := s.driver.GenerateVolumeID(pool, volumeName)
 	datasetPath := pool + "/" + volumeName
+	if dsPath, ok := parameters[paramDatasetPath]; ok && dsPath != "" {
+		datasetPath = pool + "/" + dsPath + "/" + volumeName
+	}
+	volumeID := datasetPath
 
 	existingDataset, err := s.driver.Client().GetDataset(ctx, datasetPath)
 	if err == nil && existingDataset != nil {
@@ -418,6 +429,11 @@ func (s *ControllerServer) createNFSVolume(ctx context.Context, volumeID, datase
 		Compression: compression,
 		Sync:        sync,
 		Properties:  make(map[string]any),
+	}
+
+	// Enable ancestor creation when datasetPath places volumes in a subdirectory
+	if _, ok := parameters[paramDatasetPath]; ok {
+		datasetOpts.CreateAncestors = true
 	}
 
 	for key, value := range parameters {
@@ -665,6 +681,11 @@ func (s *ControllerServer) createISCSIVolume(ctx context.Context, volumeID, data
 		Volblocksize: volblocksize,
 		Compression:  compression,
 		Properties:   make(map[string]any),
+	}
+
+	// Enable ancestor creation when datasetPath places volumes in a subdirectory
+	if _, ok := parameters[paramDatasetPath]; ok {
+		datasetOpts.CreateAncestors = true
 	}
 
 	if val, ok := parameters[paramSparse]; ok && strings.EqualFold(val, "true") {
