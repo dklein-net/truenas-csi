@@ -11,7 +11,7 @@ IMG_TAG ?= v$(VERSION)
 
 # Go configuration
 GO ?= go
-LDFLAGS ?= -X github.com/truenas/truenas-csi/pkg/driver.DRIVER_VERSION=v$(VERSION)
+LDFLAGS ?= -X github.com/truenas/truenas-csi/pkg/driver.DRIVER_VERSION=$(IMG_TAG)
 GOFLAGS ?= -v
 
 .PHONY: all
