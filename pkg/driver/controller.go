@@ -533,10 +533,21 @@ func (s *ControllerServer) createNFSVolume(ctx context.Context, volumeID, datase
 }
 
 // makeISCSITargetSuffix creates a valid iSCSI target name suffix from a volume ID.
-// The name is converted to lowercase (TrueNAS requirement) and truncated to fit
-// within TrueNAS's 120 character limit.
+// The name is converted to lowercase and non-allowed characters are replaced with
+// dashes to comply with TrueNAS's requirement: lowercase alphanumeric, dot, dash,
+// and colon only. Truncated to fit within TrueNAS's 120 character limit.
 func makeISCSITargetSuffix(volumeID string) string {
-	suffix := strings.ToLower(fmt.Sprintf("csi-%s", strings.ReplaceAll(volumeID, "/", "-")))
+	suffix := strings.ToLower(fmt.Sprintf("csi-%s", volumeID))
+	result := make([]byte, 0, len(suffix))
+	for i := 0; i < len(suffix); i++ {
+		c := suffix[i]
+		if (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '.' || c == '-' || c == ':' {
+			result = append(result, c)
+		} else {
+			result = append(result, '-')
+		}
+	}
+	suffix = string(result)
 	if len(suffix) > maxISCSITargetNameLength {
 		suffix = suffix[:maxISCSITargetNameLength]
 	}
