@@ -21,9 +21,11 @@ import (
 	"k8s.io/mount-utils"
 )
 
+// DRIVER_VERSION is set at build time via ldflags.
+var DRIVER_VERSION = "dev"
+
 const (
-	DRIVER_NAME    = "csi.truenas.io"
-	DRIVER_VERSION = "0.1.0"
+	DRIVER_NAME = "csi.truenas.io"
 
 	DEFAULT_IQN_BASE = "iqn.2000-01.io.truenas"
 

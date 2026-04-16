@@ -4,7 +4,8 @@ WORKDIR /build
 COPY go.mod go.sum* ./
 RUN go mod download 2>/dev/null || true
 COPY . .
-RUN CGO_ENABLED=0 GOOS=linux go build -o truenas-csi-driver cmd/main.go
+ARG VERSION=dev
+RUN CGO_ENABLED=0 GOOS=linux go build -ldflags "-X github.com/truenas/truenas-csi/pkg/driver.DRIVER_VERSION=v${VERSION}" -o truenas-csi-driver cmd/main.go
 
 FROM alpine:3.19
 RUN apk add --no-cache ca-certificates nfs-utils open-iscsi e2fsprogs xfsprogs util-linux

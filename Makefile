@@ -11,6 +11,7 @@ IMG_TAG ?= v$(VERSION)
 
 # Go configuration
 GO ?= go
+LDFLAGS ?= -X github.com/truenas/truenas-csi/pkg/driver.DRIVER_VERSION=v$(VERSION)
 GOFLAGS ?= -v
 
 .PHONY: all
@@ -26,7 +27,7 @@ help: ## Display this help
 
 .PHONY: build
 build: ## Build the CSI driver binary
-	$(GO) build $(GOFLAGS) -o bin/truenas-csi cmd/main.go
+	$(GO) build $(GOFLAGS) -ldflags '$(LDFLAGS)' -o bin/truenas-csi cmd/main.go
 
 .PHONY: test
 test: ## Run unit tests
@@ -48,7 +49,7 @@ clean: ## Clean build artifacts
 
 .PHONY: docker-build
 docker-build: ## Build standard Docker image (Alpine-based)
-	docker build -t $(DRIVER_IMAGE):$(IMG_TAG) .
+	docker build --build-arg VERSION=$(VERSION) -t $(DRIVER_IMAGE):$(IMG_TAG) .
 
 .PHONY: docker-push
 docker-push: ## Push standard Docker image
@@ -58,7 +59,7 @@ docker-push: ## Push standard Docker image
 
 .PHONY: build-ubi
 build-ubi: ## Build UBI-based driver image for Red Hat certification
-	docker build -f Dockerfile.ubi -t $(DRIVER_IMAGE):$(IMG_TAG) .
+	docker build -f Dockerfile.ubi --build-arg VERSION=$(VERSION) -t $(DRIVER_IMAGE):$(IMG_TAG) .
 
 .PHONY: push-ubi
 push-ubi: ## Push UBI-based driver image

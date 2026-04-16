@@ -15,7 +15,8 @@ RUN go mod download 2>/dev/null || true
 COPY . .
 
 # Build the binary
-RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o truenas-csi cmd/main.go
+ARG VERSION=dev
+RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags "-X github.com/truenas/truenas-csi/pkg/driver.DRIVER_VERSION=v${VERSION}" -o truenas-csi cmd/main.go
 
 # Stage 2: Get storage packages from CentOS Stream (RHEL-compatible)
 FROM quay.io/centos/centos:stream10 AS packages
