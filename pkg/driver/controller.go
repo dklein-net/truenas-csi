@@ -64,39 +64,39 @@ const (
 
 // StorageClass parameter keys
 const (
-	paramProtocol    = "protocol"
-	paramPool        = "pool"
-	paramDatasetPath = "datasetPath"
-	paramCompression = "compression"
+	paramProtocol     = "protocol"
+	paramPool         = "pool"
+	paramDatasetPath  = "datasetPath"
+	paramCompression  = "compression"
 	paramSync         = "sync"
 	paramVolBlockSize = "volblocksize"
 	paramSparse       = "sparse"
 
 	// iSCSI parameters
-	paramISCSIBlockSize  = "iscsi.blocksize"
-	paramISCSIIQNBase    = "iscsi.iqn-base"
-	paramISCSIIQNPrefix  = "iscsi.iqn-prefix"
-	paramISCSIChapUser   = "iscsi.chapUser"
-	paramISCSIChapSecret = "iscsi.chapSecret"
+	paramISCSIBlockSize      = "iscsi.blocksize"
+	paramISCSIIQNBase        = "iscsi.iqn-base"
+	paramISCSIIQNPrefix      = "iscsi.iqn-prefix"
+	paramISCSIChapUser       = "iscsi.chapUser"
+	paramISCSIChapSecret     = "iscsi.chapSecret"
 	paramISCSIChapPeerUser   = "iscsi.chapPeerUser"
 	paramISCSIChapPeerSecret = "iscsi.chapPeerSecret"
 	paramISCSIInitiators     = "iscsi.initiators"
 
 	// iSCSI auth types
-	iscsiAuthTypeCHAP    = "chap"
-	iscsiAuthTypeMutual  = "CHAP_MUTUAL"
+	iscsiAuthTypeCHAP   = "chap"
+	iscsiAuthTypeMutual = "CHAP_MUTUAL"
 
 	// Delete options
 	paramForceDelete             = "forceDelete"
 	paramDeleteExtentsWithTarget = "deleteExtentsWithTarget"
 
 	// Encryption parameters
-	paramEncryption             = "encryption"
-	paramEncryptionAlgorithm    = "encryption.algorithm"
-	paramEncryptionPassphrase   = "encryption.passphrase"
-	paramEncryptionKey          = "encryption.key"
-	paramEncryptionGenerateKey  = "encryption.generateKey"
-	paramEncryptionPBKDF2Iters  = "encryption.pbkdf2iters"
+	paramEncryption            = "encryption"
+	paramEncryptionAlgorithm   = "encryption.algorithm"
+	paramEncryptionPassphrase  = "encryption.passphrase"
+	paramEncryptionKey         = "encryption.key"
+	paramEncryptionGenerateKey = "encryption.generateKey"
+	paramEncryptionPBKDF2Iters = "encryption.pbkdf2iters"
 
 	// Snapshot parameters
 	paramSnapshotSchedule      = "snapshot.schedule"
@@ -107,7 +107,7 @@ const (
 )
 
 const (
-	_ = iota
+	_   = iota
 	KiB = 1 << (10 * iota)
 	MiB
 	GiB
@@ -464,11 +464,11 @@ func (s *ControllerServer) createNFSVolume(ctx context.Context, volumeID, datase
 	stringPtr := func(s string) *string { return &s }
 
 	mapAllUser := defaultNFSMapAllUser
-	if val, ok := parameters[paramNFSMapAllUser]; ok && val != "" {
+	if val, ok := parameters[paramNFSMapAllUser]; ok {
 		mapAllUser = val
 	}
 	mapAllGroup := defaultNFSMapAllGroup
-	if val, ok := parameters[paramNFSMapAllGroup]; ok && val != "" {
+	if val, ok := parameters[paramNFSMapAllGroup]; ok {
 		mapAllGroup = val
 	}
 
@@ -1093,11 +1093,11 @@ func (s *ControllerServer) createNFSShareForClone(ctx context.Context, volumeID,
 	stringPtr := func(s string) *string { return &s }
 
 	mapAllUser := defaultNFSMapAllUser
-	if val, ok := parameters[paramNFSMapAllUser]; ok && val != "" {
+	if val, ok := parameters[paramNFSMapAllUser]; ok {
 		mapAllUser = val
 	}
 	mapAllGroup := defaultNFSMapAllGroup
-	if val, ok := parameters[paramNFSMapAllGroup]; ok && val != "" {
+	if val, ok := parameters[paramNFSMapAllGroup]; ok {
 		mapAllGroup = val
 	}
 
