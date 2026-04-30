@@ -16,6 +16,11 @@ const (
 	methodDatasetUpdate = "pool.dataset.update"
 )
 
+// TrueNAS API method names for filesystem
+const (
+	methodFilesystemSetperm = "filesystem.setperm"
+)
+
 // TrueNAS API method names for NFS shares
 const (
 	methodNFSCreate = "sharing.nfs.create"
@@ -178,6 +183,23 @@ type DatasetGetExtraOptions struct {
 type DatasetDeleteOptions struct {
 	Recursive bool `json:"recursive"`
 	Force     bool `json:"force"`
+}
+
+// Set Permissions on Filesystem
+type FilesystemSetpermOptions struct {
+	Path    string                           `json:"path"`             // Must be at least 1 characters long
+	Uid     int32                            `json:"uid,omitempty"`    // Value must be greater or equal to -1 and lesser or equal to 2147483647
+	User    string                           `json:"string,omitempty"` // Must be at least 1 characters long
+	Gid     int32                            `json:"gid,omitempty"`    // Value must be greater or equal to -1 and lesser or equal to 2147483647
+	Group   string                           `json:"group,omitempty"`  // Must be at least 1 characters long
+	Mode    string                           `json:"mode,omitempty"`
+	Options *FilesystemSetpermOptionsOptions `json:"options,omitempty"`
+}
+
+type FilesystemSetpermOptionsOptions struct {
+	Recursive bool `json:"recursive"` // Default: false
+	Traverse  bool `json:"traverse"`  // Default: false
+	StripACL  bool `json:"stripacl"`  // Default: false
 }
 
 // NFSShare represents an NFS share in TrueNAS.
@@ -526,6 +548,16 @@ func (c *Client) GetDataset(ctx context.Context, path string) (*Dataset, error) 
 	}
 
 	return parseDatasetResponse(result), nil
+}
+
+// Set Filesystem Permissions on Path
+func (c *Client) FilesystemSetPermissions(ctx context.Context, options *FilesystemSetpermOptions) error {
+	var result any
+	err := c.Call(ctx, methodFilesystemSetperm, []any{options}, &result)
+	if err != nil {
+		return fmt.Errorf("failed to set permissions: %w", err)
+	}
+	return nil
 }
 
 // getString safely extracts a string value from a map.

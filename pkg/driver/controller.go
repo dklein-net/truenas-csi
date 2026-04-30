@@ -4,9 +4,11 @@ import (
 	"context"
 	"fmt"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/container-storage-interface/spec/lib/go/csi"
 	"github.com/truenas/truenas-csi/pkg/client"
@@ -64,13 +66,16 @@ const (
 
 // StorageClass parameter keys
 const (
-	paramProtocol     = "protocol"
-	paramPool         = "pool"
-	paramDatasetPath  = "datasetPath"
-	paramCompression  = "compression"
-	paramSync         = "sync"
-	paramVolBlockSize = "volblocksize"
-	paramSparse       = "sparse"
+	paramProtocol           = "protocol"
+	paramPool               = "pool"
+	paramDatasetPath        = "datasetPath"
+	paramDatasetPermissions = "datasetPermissions"
+	paramDatasetUser        = "datasetUser"
+	paramDatasetGroup       = "datasetGroup"
+	paramCompression        = "compression"
+	paramSync               = "sync"
+	paramVolBlockSize       = "volblocksize"
+	paramSparse             = "sparse"
 
 	// iSCSI parameters
 	paramISCSIBlockSize      = "iscsi.blocksize"
@@ -253,6 +258,30 @@ func (s *ControllerServer) validateStorageClassParameters(ctx context.Context, p
 		days, err := strconv.Atoi(val)
 		if err != nil || days < 1 || days > 365 {
 			return fmt.Errorf("invalid snapshot.retention: %s (valid: 1-365 days)", val)
+		}
+	}
+
+	// Validate Unix Permission
+	if val, ok := parameters[paramDatasetPermissions]; ok && val != "" {
+		matched, err := regexp.MatchString("[0-7]{3}", val)
+		if err != nil || matched == false {
+			return fmt.Errorf("invalid unix permission: %s", val)
+		}
+	}
+
+	// Validate DatasetUser
+	if val, ok := parameters[paramDatasetUser]; ok && val != "" {
+		length := utf8.RuneCountInString(val)
+		if length < 1 {
+			return fmt.Errorf("invalid DatasetUser length: %s", val)
+		}
+	}
+
+	// Validate DatasetGroup
+	if val, ok := parameters[paramDatasetGroup]; ok && val != "" {
+		length := utf8.RuneCountInString(val)
+		if length < 1 {
+			return fmt.Errorf("invalid DatasetGroup length: %s", val)
 		}
 	}
 
@@ -459,6 +488,14 @@ func (s *ControllerServer) createNFSVolume(ctx context.Context, volumeID, datase
 	mountpoint := dataset.Mountpoint
 	if mountpoint == "" {
 		mountpoint = filepath.Join(DefaultMountpoint, datasetPath)
+	}
+
+	// Set Permissions if configured
+	if fsOpts := parseFilesystemSetpermOptions(parameters, mountpoint); fsOpts != nil {
+		err := s.driver.Client().FilesystemSetPermissions(ctx, fsOpts)
+		if err != nil {
+			return nil, fmt.Errorf("failed to set permissions: %w", err)
+		}
 	}
 
 	stringPtr := func(s string) *string { return &s }
@@ -1936,6 +1973,37 @@ func (s *ControllerServer) ControllerGetVolume(ctx context.Context, req *csi.Con
 			},
 		},
 	}, nil
+}
+
+// parseFilesystemSetpermOptions extracts permission configuration from StorageClass parameters.
+// Parameters:
+//   - datasetPermissions: Unix Permissions for Dataset (e.g. "777")
+//   - datasetUser: User on TrueNAS System (e.g. "root")
+//   - datasetGroup: User on TrueNAS System (e.g. "wheel")
+//
+// Returns nil if permissions are not set
+func parseFilesystemSetpermOptions(parameters map[string]string, mountpoint string) *client.FilesystemSetpermOptions {
+	permission, ok := parameters[paramDatasetPermissions]
+	if !ok {
+		return nil
+	}
+
+	// Permission
+	opts := &client.FilesystemSetpermOptions{
+		Path: mountpoint,
+		Mode: permission,
+	}
+
+	// User
+	if val, ok := parameters[paramDatasetUser]; ok && val != "" {
+		opts.User = val
+	}
+	// Group
+	if val, ok := parameters[paramDatasetGroup]; ok && val != "" {
+		opts.Group = val
+	}
+
+	return opts
 }
 
 // parseEncryptionOptions extracts encryption configuration from StorageClass parameters.
