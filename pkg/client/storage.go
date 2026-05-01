@@ -187,19 +187,19 @@ type DatasetDeleteOptions struct {
 
 // Set Permissions on Filesystem
 type FilesystemSetpermOptions struct {
-	Path    string                           `json:"path"`             // Must be at least 1 characters long
-	Uid     int32                            `json:"uid,omitempty"`    // Value must be greater or equal to -1 and lesser or equal to 2147483647
-	User    string                           `json:"string,omitempty"` // Must be at least 1 characters long
-	Gid     int32                            `json:"gid,omitempty"`    // Value must be greater or equal to -1 and lesser or equal to 2147483647
-	Group   string                           `json:"group,omitempty"`  // Must be at least 1 characters long
+	Path    string                           `json:"path"`            // Must be at least 1 characters long
+	Uid     int32                            `json:"uid,omitempty"`   // Value must be greater or equal to -1 and lesser or equal to 2147483647
+	User    string                           `json:"user,omitempty"`  // Must be at least 1 characters long
+	Gid     int32                            `json:"gid,omitempty"`   // Value must be greater or equal to -1 and lesser or equal to 2147483647
+	Group   string                           `json:"group,omitempty"` // Must be at least 1 characters long
 	Mode    string                           `json:"mode,omitempty"`
 	Options *FilesystemSetpermOptionsOptions `json:"options,omitempty"`
 }
 
 type FilesystemSetpermOptionsOptions struct {
-	Recursive bool `json:"recursive"` // Default: false
-	Traverse  bool `json:"traverse"`  // Default: false
-	StripACL  bool `json:"stripacl"`  // Default: false
+	Recursive bool `json:"recursive,omitempty"` // Default: false
+	Traverse  bool `json:"traverse,omitempty"`  // Default: false
+	StripACL  bool `json:"stripacl,omitempty"`  // Default: false
 }
 
 // NFSShare represents an NFS share in TrueNAS.

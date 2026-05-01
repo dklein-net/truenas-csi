@@ -485,17 +485,17 @@ func (s *ControllerServer) createNFSVolume(ctx context.Context, volumeID, datase
 		return nil, fmt.Errorf("failed to create dataset: %w", err)
 	}
 
-	mountpoint := dataset.Mountpoint
-	if mountpoint == "" {
-		mountpoint = filepath.Join(DefaultMountpoint, datasetPath)
-	}
-
 	// Set Permissions if configured
-	if fsOpts := parseFilesystemSetpermOptions(parameters, mountpoint); fsOpts != nil {
+	if fsOpts := parseFilesystemSetpermOptions(parameters, filepath.Join(DefaultMountpoint, datasetPath)); fsOpts != nil {
 		err := s.driver.Client().FilesystemSetPermissions(ctx, fsOpts)
 		if err != nil {
 			return nil, fmt.Errorf("failed to set permissions: %w", err)
 		}
+	}
+
+	mountpoint := dataset.Mountpoint
+	if mountpoint == "" {
+		mountpoint = filepath.Join(DefaultMountpoint, datasetPath)
 	}
 
 	stringPtr := func(s string) *string { return &s }
@@ -2002,6 +2002,9 @@ func parseFilesystemSetpermOptions(parameters map[string]string, mountpoint stri
 	if val, ok := parameters[paramDatasetGroup]; ok && val != "" {
 		opts.Group = val
 	}
+
+	// We don't need these Options for now
+	opts.Options = nil
 
 	return opts
 }
